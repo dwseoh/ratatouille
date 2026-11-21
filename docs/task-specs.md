@@ -34,6 +34,9 @@ the **contracts** section, because that's the part other people code against.
 
 These replace the C1-C12 table in dev-plan.md where they differ (the changes come from tonight's decisions).
 
+> **`laptop/coach/contracts.py` is now the source of truth.** It has every interface below as real Python, plus a Fake
+> of each one. Where this prose and contracts.py disagree, **contracts.py wins**. Smoke test: `cd laptop && python -m coach.contracts`.
+
 ### C1. UDP protocol (A). Port 4210, see protocol.md
 
 - **Laptop → S3:** `C pan tilt laser seq` at 30 Hz, `T line text`, `R`.
@@ -232,8 +235,9 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
   calls `agent.turn(text, frames, on_sentence)`, and turns each sentence into a TTS frame. That keeps
   C's code plain Python, testable with typed input.
 - **Barge-in:** when Pipecat detects the user speaking, call `agent.cancel()` + `Speech.stop()`.
-- **Turn end:** start with ~0.8-1.0 s of silence before treating speech as finished. Try Pipecat's
-  smart-turn option if there's time.
+- **Turn end:** use Pipecat's **smart-turn** model as part of V1 (not optional any more): it decides whether
+  the sentence sounds finished, so the silence wait can drop to ~0.3 s for complete sentences. Keep a
+  ~0.8-1.0 s silence fallback for when smart-turn isn't sure.
 - **Mock for C until done:** `FakeSpeech` (print + macOS `say`) and typed input.
 - **Blocks:** everything spoken. **Deadline: Sat 10 am.** If it isn't talking end to end by then, switch to Vapi.
 - **Done when:** you say "hey, what's step one", it answers out loud, and talking over it stops it.
@@ -258,6 +262,19 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
   Debounce: once per object per utterance.
 - Record `name_heard` and `point_called` for telemetry.
 - **Done when:** saying "where's the lime" moves the laser <300 ms after the word.
+
+#### V4b. Intent router (B, Sat AM, S-M)
+- **File:** `laptop/coach/intents.py` (new), implementing `IntentRouterAPI` from contracts.py. Start from
+  `KeywordRouter` in contracts.py (keywords + recipe aliases) and build up:
+  1. **Exact keywords + recipe `aliases`** (0 ms), then **`rapidfuzz`** for speech-to-text misspellings ("lyme", "silantro").
+  2. **Local embedding model** for paraphrases: `sentence-transformers` `all-MiniLM-L6-v2` (~80 MB, CPU or `mps`).
+     Write ~10 example phrases per `Intent` (POINT, DONE, REPEAT, STOP, START_OVER), embed them once at startup,
+     and pick the closest intent by cosine similarity. Below a threshold (~0.5, tune it), return `OTHER`.
+     For POINT, still find the object name with step 1.
+- Runs on **interim** transcripts, **in parallel** with the agent, never in front of it. Actions: POINT → `aimer.point_at`,
+  DONE → `steps.propose_done("user")`, STOP → `speech.stop()`, START_OVER → `session.reset()`.
+- **Done when:** <50 ms per call on the M5, and a list of ~30 test phrases classifies right
+  ("I'm done with that" → DONE, "where's the green one" → POINT lime, "how chunky?" → OTHER).
 
 #### V5. Wake phrase + session reset (B, Sat AM, S)
 - Implement C13. Fuzzy-match "hey chef" in interim transcripts ("hey chef", "hey jeff", "a chef"…).
