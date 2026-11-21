@@ -173,3 +173,28 @@ def test_missing_calibration_is_none(tmp_path):
 def test_parse_args_defaults():
     a = app_main.parse_args([])
     assert not a.type and not a.no_yolo and not a.no_s3 and a.cam is None and not a.button
+
+
+@pytest.mark.timeout(10)
+def test_closed_loop_flag_starts_dot_tracker():
+    link = RecLink()
+
+    async def go():
+        app = await app_main.App.create(args("--closed-loop"), frames=FakeFrames(), link=link,
+                                        calib=linear_calib(), agent=FakeAgent())
+        assert app.aimer.closed_loop
+        await app.run(lines=["where's the lime"])
+        return app
+
+    app = asyncio.run(go())
+    assert link.laser is False
+
+
+def test_closed_loop_needs_calibration(monkeypatch):
+    monkeypatch.setattr(app_main, "load_calibration", lambda path=None: None)   # no calibration.json
+
+    async def go():
+        return await app_main.App.create(args("--closed-loop"), frames=FakeFrames(), link=RecLink(),
+                                         agent=FakeAgent())
+
+    assert asyncio.run(go()).aimer.closed_loop is False

@@ -7,6 +7,7 @@
     python -m coach.main --no-yolo                           # fixed fake detections instead of YOLO
     python -m coach.main --type                              # type instead of talking (no mic/Pipecat/Deepgram)
     python -m coach.main --fake-agent                        # echo agent, no Anthropic key needed
+    python -m coach.main --closed-loop                       # stretch: dot finder + closed-loop correction
 
 Who does what at runtime:
     FrameGrabber (A, thread)  -> frames for YOLO, the agent and calibration
@@ -194,7 +195,8 @@ class App:
         frames = frames if frames is not None else make_frames(args)
         link = link if link is not None else await make_link(args)
         calib = calib if calib is not None else load_calibration()
-        aimer = Aimer(link, calib, state, hz=cfg.control_hz)
+        closed = bool(getattr(args, "closed_loop", False)) and calib is not None
+        aimer = Aimer(link, calib, state, hz=cfg.control_hz, closed_loop=closed)
         steps = make_steps(state)
         steps.on_change(lambda n: link.show_text(TFT_STEP, f"Step {n + 1}: {recipe.steps[n].short}"))
         agent = agent if agent is not None else make_agent(state, aimer, steps, link, args.fake_agent)
@@ -226,6 +228,10 @@ class App:
         self._spawn(tft_latency_loop(self.state, self.link), "tft-latency")
         self._spawn(health_loop(self.frames, self.link, self.calib), "health")
         self._start_detection()
+        if self.aimer.closed_loop:
+            from .dot import DotTracker   # stretch: finds the real dot (with blink checks), writes State.dot
+            self._spawn(DotTracker(self.frames, self.link, self.state, hz=cfg.control_hz).run(), "dot")
+            log.info("closed-loop aiming ON (dot tracker running)")
         try:
             await self.agent.prewarm()
             if self.args.type:
@@ -283,6 +289,8 @@ def parse_args(argv=None):
     ap.add_argument("--say", action="store_true", help="with --type: speak replies with macOS `say`")
     ap.add_argument("--fake-agent", action="store_true", help="echo agent, no API key needed")
     ap.add_argument("--button", action="store_true", help="BOOT button starts/resets the session")
+    ap.add_argument("--closed-loop", action="store_true",
+                    help="stretch: find the real laser dot and correct the aim (needs calibration.json)")
     return ap.parse_args(argv)
 
 

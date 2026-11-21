@@ -218,6 +218,7 @@ def test_no_calibration(rig):
     assert any(line == TFT_STATUS for line, _ in link.texts)
     run_ticks(aimer, clock, 30)
     assert (link.pan, link.tilt) == (pan, tilt) and not aimer.on_target
+    assert not link.laser            # never shine an uncalibrated laser
 
 
 @pytest.mark.timeout(5)

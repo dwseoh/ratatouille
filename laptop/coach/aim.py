@@ -121,7 +121,8 @@ class Aimer:
             self._reset_closed_loop()
         self.target = self.state.target = name
         self.on_target = self.state.on_target = False
-        self.link.laser = True
+        # No calibration -> the laser would land somewhere random: keep it off (still "ok", the agent carries on).
+        self.link.laser = self.calib is not None
         self._last_point = self._last_seen = self.clock()
         self._verdict, self._turn = None, (self.state.turns[-1] if self.state.turns else None)
         if self.calib is None:
