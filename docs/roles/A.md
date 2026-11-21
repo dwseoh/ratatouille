@@ -11,6 +11,25 @@ The box is worn on the chest, runs from the power bank, and the laser can never 
 
 Your part is the critical path. B and C can fake you, but the demo can't. Push small, working pieces early.
 
+## Software status (Sat AM)
+
+All of A's laptop code and firmware is written and tested without hardware. What's left needs the box.
+
+| Piece | Status | Run / test |
+|---|---|---|
+| `tools/fake_s3.py`, `ControlLink` | done, tested | `python tools/fake_s3.py` + `cd laptop && python ../tools/sweep.py` |
+| `FrameGrabber` | done, tested (file, webcam index, MJPEG URL, reconnect) | `CAM_URL=0` |
+| `control_s3.ino` (+ BOOT `B`), `servo_test.ino` | compile clean (esp32 core 3.3.13) | flash, then `tools/check_hw.py` |
+| `tools/check_hw.py` | done | `cd laptop && python ../tools/check_hw.py --button 15` (S3 online, camera fps, BOOT) |
+| `Calibration`, `calibrate.py` | done, not run on hardware | `cd laptop && python -m coach.calibrate` |
+| Open-loop `Aimer` | done, tested with fakes. No calibration file = laser stays off | used by `main.py` |
+| `main.py` | real Aimer/link/frames wired to B's voice + YOLO + session and C's agent | `python -m coach.main --type --no-yolo --fake-agent --cam 0 --ctl 127.0.0.1` |
+| Stretch: dot finder, blink check, closed loop, `calibrate --auto` | done, off by default, synthetic tests only | `python -m coach.main --closed-loop`, `python -m coach.calibrate --auto` |
+
+Order on hardware: `check_hw.py` → mount → tilt limits → `calibrate` (counter distance) → `main.py --type --no-yolo`
+(laser should land on the fake boxes' spots) → real YOLO → full voice run. The BOOT button is optional (`--button`):
+B's session uses the "hey Remy" wake phrase.
+
 ## Files you own
 
 | File | What |
