@@ -23,7 +23,8 @@ class Config:
     # Claude. Measure latency of these against each other on day 1 (see docs/architecture.md).
     model: str = _env("CLAUDE_MODEL", "claude-haiku-5-5")
     effort: str = _env("CLAUDE_EFFORT", "low")
-    frames_per_turn: int = 3          # images sent with each voice turn
+    watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # B3: cheap model that reads frames in the background
+    frames_per_turn: int = 3         # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending
 
     # Voice (V1). Deepgram streaming STT + Aura TTS through Pipecat.
