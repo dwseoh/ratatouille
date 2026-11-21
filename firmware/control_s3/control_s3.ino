@@ -11,6 +11,7 @@
 #include "secrets.h"  // WIFI_SSID, WIFI_PASS (copy secrets.example.h)
 
 const int PIN_PAN = 4, PIN_TILT = 5, PIN_LASER = 6, PIN_VBAT = 1;
+const int PIN_BOOT = 0;  // BOOT button, a normal input after boot. Press -> "B" to the hub.
 // 1.54" 240x240 ST7789 TFT on SPI. The module's "SCL"/"SDA" pins are SPI clock/data.
 const int PIN_TFT_BL = 7, PIN_TFT_RST = 8, PIN_TFT_DC = 9, PIN_TFT_CS = 10, PIN_TFT_MOSI = 11, PIN_TFT_SCK = 12;
 const int LINE_CHARS = 20;  // text size 2 = 12 px per char, 240 px wide
@@ -90,6 +91,7 @@ void drawLines() {
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_LASER, OUTPUT); digitalWrite(PIN_LASER, LOW);  // laser off before anything else
+  pinMode(PIN_BOOT, INPUT_PULLUP);
   pan.attach(PIN_PAN); tilt.attach(PIN_TILT);
   applyOutputs();
 
@@ -120,6 +122,14 @@ void loop() {
   uint32_t now = millis();
   if (laserOn && now - lastCmdMs > WATCHDOG_MS) safeState();  // fail safe
   if (WiFi.status() != WL_CONNECTED) { safeState(); WiFi.reconnect(); delay(100); }
+
+  static uint32_t lastPress = 0; static bool wasDown = false;
+  bool down = digitalRead(PIN_BOOT) == LOW;
+  if (down && !wasDown && now - lastPress > 500 && hubPort) {  // edge + 500 ms debounce
+    lastPress = now;
+    udp.beginPacket(hubIp, hubPort); udp.print("B"); udp.endPacket();
+  }
+  wasDown = down;
 
   if (hubPort && now - lastStatusMs > STATUS_EVERY_MS) {
     lastStatusMs = now;
