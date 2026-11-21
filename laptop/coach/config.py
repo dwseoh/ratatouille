@@ -24,7 +24,8 @@ class Config:
     # vs ~2 s for Haiku and standard Opus; see docs). Set CLAUDE_MODEL=claude-haiku-5-5 CLAUDE_FAST=0 for the
     # cheap option (~76x cheaper per request, ~0.4 s slower).
     model: str = _env("CLAUDE_MODEL", "claude-opus-5-5")
-    effort: str = _env("CLAUDE_EFFORT", "low")
+    # COACH_EFFORT, not CLAUDE_EFFORT: Claude Code sets CLAUDE_EFFORT in its own shell, and a shell variable beats .env.
+    effort: str = _env("COACH_EFFORT", "low")
     # Opus 5.5 "fast mode": same model, faster output, 2x price ($8/$40 per MTok). Ignored by other models.
     fast: bool = _env("CLAUDE_FAST", "1").lower() in ("1", "true", "yes")
     # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is

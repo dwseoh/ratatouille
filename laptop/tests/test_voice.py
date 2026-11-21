@@ -29,9 +29,11 @@ class SpyAgent(FakeAgent):
     def __init__(self, delay=0.0):
         super().__init__()
         self.texts, self.cancels, self.delay = [], 0, delay
+        self.frame_counts = []
 
     async def turn(self, user_text, frames, on_sentence):
         self.texts.append(user_text)
+        self.frame_counts.append(len(frames))
         await asyncio.sleep(self.delay)
         return await super().turn(user_text, frames, on_sentence)
 
@@ -63,6 +65,16 @@ def run(proc, frames, direction=FrameDirection.DOWNSTREAM):
 
 def spoken(frames):
     return [f.text for f in frames if isinstance(f, TTSSpeakFrame)]
+
+
+def test_frames_go_to_the_agent_only_while_the_camera_is_connected():
+    proc, agent, state = setup()
+    run(proc, user_says("what's step one") + [SleepFrame(sleep=0.5)])
+    assert agent.frame_counts == [3]
+    proc, agent, state = setup()
+    proc.frames.connected = False                      # camera dropped: no stale frames, the agent says so once
+    run(proc, user_says("what's step one") + [SleepFrame(sleep=0.5)])
+    assert agent.frame_counts == [0]
 
 
 def test_turn_calls_agent_and_speaks_each_sentence():

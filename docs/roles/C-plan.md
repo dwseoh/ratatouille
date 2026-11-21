@@ -72,12 +72,12 @@ Tests: add to `test_agent.py`; try them in `agent_cli`.
 | Test | How | Pass |
 |---|---|---|
 | Unit suite | `cd laptop && ../.venv/bin/python -m pytest -q` | all green |
-| Typed harness | `python -m coach.agent_cli`, real key: "where do I start?", "where's the lime?", "where's the salt?", "ok I'm done" | 1-2 short sentences, `point_at` before speech, recipe never read out |
+| Typed harness | `python -m coach.agent_cli`, real key: "where do I start?", "where's the lime?", "where's the salt?", "ok I'm done" | 1-2 short sentences that say where things are, the coach speaks first and then calls `point_at` (in voice mode the laser already moves before the coach answers, because the intent router points from your partial speech), recipe never read out |
 | Cache | second turn prints `cache_read_input_tokens` | large, not 0 |
 | Latency | note ttft per turn | about 1.5 s first sentence with fast mode |
 | Fallback drills | `FIRST_TOKEN_TIMEOUT_S=0.01`; unset key; no frames; forced refusal | each speaks one sensible line, `TurnStats.error` set, dashboard event shown |
 | Live checks | `tools/live_agent_check.py`, `tools/live_watcher_check.py` | all PASS |
-| 7-step run | type through all steps incl. a push-back and a vision "ask" | step ends at 7 |
+| 7-step run | typed (`python -m coach.main --type`): six "ok I'm done" with ~4 s between them, step ends at 7 and the 7th says finished. The push-back and vision "ask" need the watcher, which only runs in voice mode: covered by `test_full_seven_step_run_with_pushback_and_a_vision_ask`, and live by the last row of C-qa.md section 8 | step ends at 7 |
 | Check-ins | silence 20 s during a step | speaks once, never over the user |
 | Watcher | run alongside a voice turn | never speaks over the user |
 

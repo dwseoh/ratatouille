@@ -108,7 +108,7 @@ If something has to change, both people agree first.
 | C8 | **Recipe JSON** | `{name, objects[], steps[{short, say, done_when}]}` (see `recipes/guacamole.json`). `objects` = YOLO classes = `point_at` names = keyword list. | B |
 | C9 | **Latency record** | per turn: `speech_end, transcript_final, request_sent, first_token, first_sentence, tts_first_audio` (+ pointing: `name_heard, set_target, dot_on_target`). Derived keys: `endpoint_ms, stt_ms, ttft_ms, tts_first_audio_ms, point_ms`. | both |
 | C10 | **Event log** | `(t, source, text)`, source = `vision`/`user`/`agent`/`system` | B |
-| C11 | **Config** | `.env`: `ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_EFFORT, CAM_URL, CTL_HOST, YOLO_DEVICE` + STT/TTS keys. Read only in `config.py`. | both |
+| C11 | **Config** | `.env`: `ANTHROPIC_API_KEY, CLAUDE_MODEL, COACH_EFFORT, CAM_URL, CTL_HOST, YOLO_DEVICE` + STT/TTS keys. Read only in `config.py`. | both |
 | C12 | **TFT line map** | 0 = links/status, 1 = IP, 2 = step, 3 = latency/"thinking…", 4 = agent message (≤20 chars) | both |
 
 ## 3. Dependencies (what blocks what)

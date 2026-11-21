@@ -13,8 +13,9 @@ brew install portaudio                                         # needed for the 
 ```
 
 - `laptop/.env` needs `ANTHROPIC_API_KEY` (and `DEEPGRAM_API_KEY` for voice). Copy `laptop/.env.example` for the rest.
-- **Gotcha:** if you run from a Claude Code terminal, it sets `CLAUDE_EFFORT=medium` in the shell, which beats your
-  `.env`. Run `unset CLAUDE_EFFORT` first (or prefix commands with `CLAUDE_EFFORT=low`).
+- **Renamed setting:** the effort level is `COACH_EFFORT` (it used to be `CLAUDE_EFFORT`, which Claude Code sets in its
+  own shell and which silently beat `.env`). If your `.env` still has `CLAUDE_EFFORT=...`, rename it; the old name is
+  ignored (the default is `low` anyway).
 - The first run downloads a small language model for the intent router (~80 MB). Run the unit tests once with WiFi
   on so it is cached.
 
@@ -71,6 +72,10 @@ dashboard reaches 7/7 "cilantro, mix". The seventh "done" says the recipe is fin
 Flags: `--no-checkins` (silence the coach), `--no-dashboard`, `--cam 0` (real webcam frames).
 
 **Pass:** no crashes, step shown on the dashboard matches the terminal, the event log lists each step change.
+
+A push-back ("I still see big chunks") and the vision "ask" ("looks mashed, ready for the next step?") need the watcher,
+which only runs in **voice mode**, so you can't trigger them by typing. The automated test
+`test_full_seven_step_run_with_pushback_and_a_vision_ask` covers them, and section 8 tests them live.
 
 ## 4. The dashboard on its own (5 min)
 
@@ -150,7 +155,7 @@ After the first real-voice run, tune the system prompt (`SYSTEM` in `laptop/coac
 
 ## 9. Before every demo
 
-1. `unset CLAUDE_EFFORT`; check `.env`: `CLAUDE_MODEL=claude-opus-5-5`, `CLAUDE_FAST=1`, `FIRST_TOKEN_TIMEOUT_S=5`.
+1. Check `.env`: `COACH_EFFORT=low`, `CLAUDE_MODEL=claude-opus-5-5`, `CLAUDE_FAST=1`, `FIRST_TOKEN_TIMEOUT_S=5`.
 2. Start the app 1-2 minutes early: it warms the cache (`prewarm ok: ... cache_read=...` in the log). The cache
    lasts 5 minutes, so re-warm by restarting if the coach sat idle longer.
 3. Open the dashboard on the judges' screen; check camera ✓ and S3 ✓.
