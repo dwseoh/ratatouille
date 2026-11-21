@@ -109,10 +109,24 @@ void setup() {
   WiFi.mode(WIFI_STA); WiFi.setSleep(false);  // no modem sleep = lower UDP latency
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.printf("\ncoach-ctl: joining wifi \"%s\"", WIFI_SSID);
-  uint32_t t0 = millis();
+  uint32_t t0 = millis(), tWhy = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(200);
-    if (millis() - t0 > 2000) { Serial.print("."); t0 = millis(); }   // still waiting: wrong name/password or 5 GHz?
+    if (millis() - t0 > 2000) { Serial.print("."); t0 = millis(); }
+    if (millis() - tWhy > 15000) {           // every 15 s: say why, and what networks are visible
+      tWhy = millis();
+      wl_status_t st = WiFi.status();
+      Serial.printf("\ncoach-ctl: not connected (%s). Visible 2.4 GHz networks:\n",
+                    st == WL_NO_SSID_AVAIL ? "network not found: hotspot asleep/off or 5 GHz?" :
+                    st == WL_CONNECT_FAILED ? "connect failed: wrong password?" : "still trying");
+      int n = WiFi.scanNetworks();
+      for (int i = 0; i < n && i < 12; i++)
+        Serial.printf("   %-24s %4d dBm%s\n", WiFi.SSID(i).c_str(), (int)WiFi.RSSI(i),
+                      WiFi.SSID(i) == WIFI_SSID ? "   <- ours" : "");
+      if (n <= 0) Serial.println("   (none found)");
+      WiFi.scanDelete();
+      WiFi.disconnect(); WiFi.begin(WIFI_SSID, WIFI_PASS);   // start a fresh attempt
+    }
   }
   MDNS.begin("coach-ctl");
   udp.begin(UDP_PORT);
