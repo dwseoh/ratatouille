@@ -32,16 +32,16 @@
 
 | What | Due | Status |
 |---|---|---|
-| `fake_s3.py` + `FrameGrabber` to B and C | Fri night | 🔄 on branch `role-a-software`, not merged to `main` |
+| `fake_s3.py` + `FrameGrabber` to B and C | Fri night | ✅ on `main` |
 | `on_button` to B | Sat noon | ✅ code done. Optional (`--button`): B's session uses the "hey Remy" wake phrase |
 | `point_at` / `laser_off` to B and C | Sat 6 pm | 🔄 code done, needs calibration |
 
 ## Next steps, in order
 
-1. Push the overnight commits on `role-a-software` and open a PR into `main` so B and C get everything.
-2. Flash `control_s3.ino`, then `cd laptop && python ../tools/check_hw.py --button 15`.
-3. Get B's camera firmware and check ≥15 fps (`check_hw.py` tests that too).
+1. ~~Push `role-a-software` into `main`~~ ✅ done.
+2. (Handed off; `secrets.h` filled in for both boards, gitignored.) Flash `control_s3.ino`, then `cd laptop && python ../tools/check_hw.py --button 15`.
+3. Flash B's camera firmware (`LaserPointerCam`, board "ESP32 Wrover Module", Huge APP, upload 115200; close the IDE Serial Monitor first) and check fps with `check_hw.py --skip-s3`. The OV3660 tops out at ~12 fps at HVGA 480x320, so expect less than the 15 fps target.
 4. Finish the box (print, perfboard, mount), then set the tilt limits.
 5. `python -m coach.calibrate` at counter distance.
-6. `python -m coach.main --type --no-yolo`: the laser should land on the fake detection spots.
+6. ~~`python -m coach.main --type --no-yolo`~~ ✅ against the fake S3 with a synthetic calibration: every target within 0.5°. "stop"/"done" now turn the laser off; tilt is clamped on the laptop too. Repeat on the real S3.
 7. Real YOLO, then a full voice run with the team.
