@@ -48,6 +48,10 @@ async def main() -> None:
         ttft = f"{stats.ttft_s:.2f}s" if stats.ttft_s is not None else "n/a"
         print(f"  ttft {ttft} | total {stats.total_s:.2f}s | {stats.sentences} sentence(s) | "
               f"tools: {', '.join(stats.tools) or 'none'}" + (f" | ERROR {stats.error}" if stats.error else ""))
+        u = agent.last_usage
+        if u is not None:
+            print(f"  cache: read {getattr(u, 'cache_read_input_tokens', 0)} / write "
+                  f"{getattr(u, 'cache_creation_input_tokens', 0)} / uncached in {getattr(u, 'input_tokens', 0)} tokens")
         print(f"  [step {st.step + 1}/{len(recipe.steps)}] {st.note()}")
 
 

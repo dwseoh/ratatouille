@@ -74,8 +74,8 @@ What makes it *feel* instant even inside that budget:
 ## Loop 3: Watcher (every 3-5 s)
 
 Sends Claude 3-4 timestamped frames plus the event log, and gets back new events
-("avocado halved") and whether the current step looks finished. It only speaks up on its own for
-real problems (knife near fingers, burning).
+("avocado halved") and whether the current step looks finished. It only speaks up on its own to ask
+"ready for the next step?" when it sees a step finished. (Safety warnings were cut; see cut-list.md.)
 
 ## Displays
 

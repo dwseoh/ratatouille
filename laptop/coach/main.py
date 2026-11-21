@@ -8,6 +8,7 @@
     python -m coach.main --type                              # type instead of talking (no mic/Pipecat/Deepgram)
     python -m coach.main --fake-agent                        # echo agent, no Anthropic key needed
     python -m coach.main --closed-loop                       # stretch: dot finder + closed-loop correction
+    python -m coach.main --no-checkins --no-dashboard        # leave out C's check-ins / the dashboard server
 
 Who does what at runtime:
     FrameGrabber (A, thread)  -> frames for YOLO, the agent and calibration
@@ -15,7 +16,9 @@ Who does what at runtime:
     Aimer.run    (A, 30 Hz)   -> State.dets + calibration -> link.pan/tilt/laser
     ControlLink  (A, 30 Hz)   -> UDP to the S3
     voice        (B, Pipecat) -> intents (fast point/done/stop) + agent turns (C) -> TTS
-    Watcher      (C, loop 3)  -> event log, "looks done, next step?", knife-near-hand warning (voice mode only)
+    Watcher      (C, loop 3)  -> event log, "looks done, next step?" asks (voice mode only)
+    CheckIns     (C)          -> the coach speaks up on its own: step intros + a comment after a quiet spell
+    Dashboard    (C)          -> http://<laptop>:8000: live feed, step, captions, event log, latency (judges)
     Session      (B)          -> "hey Remy" starts, "start over" resets
 Nothing here blocks the event loop: YOLO runs in an executor, frames in their own thread.
 """
@@ -160,6 +163,7 @@ async def type_loop(app: "App", lines=None) -> None:
                 text = ""
         if not text:
             return
+        app.state.transcript, app.state.last_activity = text, time.monotonic()   # typing = speaking, for check-ins
         r = router.classify(text)
         if r.intent.value == "point" and r.obj:
             print(f"  [intent] point_at({r.obj}) -> {app.aimer.point_at(r.obj)}")
@@ -172,7 +176,10 @@ async def type_loop(app: "App", lines=None) -> None:
         elif r.intent.value == "stop":
             app.speech.stop()
             continue
-        stats = await app.agent.turn(text, app.frames.recent(cfg.frames_per_turn), app.speech.say)
+        # camera down: no frames at all (the agent then tells the user once), never stale ones
+        frames = app.frames.recent(cfg.frames_per_turn) if getattr(app.frames, "connected", True) else []
+        stats = await app.agent.turn(text, frames, app.speech.say)
+        app.state.last_activity = time.monotonic()
         ttft = f"{stats.ttft_s:.2f}s" if stats.ttft_s is not None else "n/a"
         print(f"  ttft {ttft} | tools: {', '.join(stats.tools) or 'none'} | {app.state.note()}")
 
@@ -187,6 +194,7 @@ class App:
         self.aimer, self.steps, self.agent = aimer, steps, agent
         self.speech = None
         self.session = None
+        self.checkins = None
         self._tasks: list[asyncio.Task] = []
 
     @classmethod
@@ -217,13 +225,42 @@ class App:
         self._spawn(detect_loop(self.frames, self.state, detector), "yolo")
 
     def _start_watcher(self) -> None:
-        """C's watcher (loop 3): event log, "step done?" asks, knife-near-hand warning. Needs the voice pipeline."""
+        """C's watcher (loop 3): event log and "step done?" asks. Needs the voice pipeline."""
         from .watcher import Watcher
         w = Watcher(cfg, self.state, self.frames, self.speech, self.steps,
                     on_ask=self.speech.agent_turn, busy=lambda: self.agent.busy)
         if hasattr(self.steps, "verdict_provider"):
             self.steps.verdict_provider = w.latest_verdict     # lets Steps push back on a premature "done"
         self._spawn(w.run(), "watcher")
+
+    def _start_checkins(self) -> None:
+        """C's check-ins: the coach speaks up on its own. Voice: through the pipeline (barge-in cancels it)."""
+        if self.args.no_checkins or self.args.fake_agent:
+            return
+        from .checkin import CheckIns
+        self.checkins = CheckIns(self.state, self.agent, self.frames, self.speech.say, self.steps,
+                                 ask=getattr(self.speech, "agent_turn", None), level=cfg.checkins)
+        if hasattr(self.agent, "checkins"):
+            self.agent.checkins = self.checkins            # lets "talk less" / "talk more" change its level
+        self._spawn(self.checkins.run(), "checkins")
+
+    def _start_dashboard(self) -> None:
+        """C's dashboard on 0.0.0.0:DASHBOARD_PORT. Never takes the app down (missing package, port in use)."""
+        if self.args.no_dashboard:
+            return
+        try:
+            from . import dashboard
+            web = dashboard.build_app(self.state, self.frames, self.link, self.agent)
+        except ImportError as e:
+            log.warning("no dashboard (%s): pip install fastapi uvicorn", e)
+            return
+
+        async def serve():
+            try:
+                await dashboard.serve(web, cfg.dashboard_port)
+            except (OSError, SystemExit):          # uvicorn exits the process when the port is taken
+                log.error("dashboard could not start on port %d (already in use?)", cfg.dashboard_port)
+        self._spawn(serve(), "dashboard")
 
     def _wire_button(self) -> None:
         """--button: BOOT press starts the session when idle, resets it when active (backup for the wake phrase)."""
@@ -239,6 +276,7 @@ class App:
         self._spawn(tft_latency_loop(self.state, self.link), "tft-latency")
         self._spawn(health_loop(self.frames, self.link, self.calib), "health")
         self._start_detection()
+        self._start_dashboard()
         if self.aimer.closed_loop:
             from .dot import DotTracker   # stretch: finds the real dot (with blink checks), writes State.dot
             self._spawn(DotTracker(self.frames, self.link, self.state, hz=cfg.control_hz).run(), "dot")
@@ -248,6 +286,7 @@ class App:
             if self.args.type:
                 self.speech = FakeSpeech(say_aloud=self.args.say)
                 self.link.show_text(TFT_STATUS, "typing mode")
+                self._start_checkins()
                 await type_loop(self, lines)
             else:
                 await self._run_voice()
@@ -267,6 +306,7 @@ class App:
         actions.session = self.session
         if not self.args.no_watcher and not self.args.fake_agent:
             self._start_watcher()
+        self._start_checkins()
         if self.args.button:
             self._wire_button()
         print('\n>>> say "hey Remy" to start, "start over" to reset\n', flush=True)
@@ -303,6 +343,8 @@ def parse_args(argv=None):
     ap.add_argument("--fake-agent", action="store_true", help="echo agent, no API key needed")
     ap.add_argument("--button", action="store_true", help="BOOT button starts/resets the session")
     ap.add_argument("--no-watcher", action="store_true", help="don't run C's watcher (loop 3)")
+    ap.add_argument("--no-checkins", action="store_true", help="the coach never speaks unprompted")
+    ap.add_argument("--no-dashboard", action="store_true", help="don't start the dashboard web server")
     ap.add_argument("--closed-loop", action="store_true",
                     help="stretch: find the real laser dot and correct the aim (needs calibration.json)")
     return ap.parse_args(argv)

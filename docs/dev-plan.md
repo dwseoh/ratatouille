@@ -23,7 +23,7 @@ Where the two disagree, task-specs.md wins (it has tonight's decisions).
 - **Audio:** Bluetooth speaker + separate Bluetooth mic (not a headset, to avoid the HFP call-quality mode). Echo is the main risk
   with always-on listening: gate or raise the barge-in threshold while TTS plays, keep the speaker pointed away from the mic,
   try macOS echo cancellation. Test in phase 0.
-- **Watcher speed-ups:** safety (knife near hand) is a local YOLO box-distance check, no LLM. The LLM watcher only runs when
+- **Watcher speed-ups:** the LLM watcher only runs when
   something changes (YOLO object set changes, or the user says "done"), with small frames and a cached prompt.
 - **Start / reset:** wake phrase "hey chef" matched in the STT stream (no separate wake-word engine). The S3's BOOT button
   (GPIO0) is reused after boot as a session reset: add `B` (button) to the S3 → laptop messages in protocol.md (C1 change).
@@ -80,7 +80,7 @@ Where the two disagree, task-specs.md wins (it has tonight's decisions).
 | B2 | Recipe + step state machine (single owner of `step`), "done" verification flow | #13 | C7, C8 | no | M | Unit test: talk through all 7 steps, incl. push-back and vision-asks-first |
 | B3 | Watcher: every 3-5 s, frames + event log → events + "step done?" | #12 | P1, B1 client, B2, C10 | no (webcam) | M | Event log fills during a webcam run |
 | B4 | Timer tool (`set_timer`): countdown, spoken + TFT reminder via V3 | #10 | V3, C12 | no | S | Timer fires through the speech queue, not over the user |
-| B5 | Fallbacks: canned per-step lines, offline keyword pointing | #16 | B1, B2, V4 | no | S | Demo runs with WiFi off (after startup) |
+| B5 | Fallbacks: canned per-step lines when the API is slow or down, camera-offline note | #16 | B1, B2, V4 | no | S | A slow or failing API never leaves the user in silence (offline mode was cut) |
 
 ### Shared
 

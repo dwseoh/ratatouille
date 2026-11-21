@@ -20,7 +20,7 @@ import cv2  # noqa: E402
 
 from coach.agent import Agent, make_handlers  # noqa: E402
 from coach.config import CONFIG as cfg  # noqa: E402
-from coach.contracts import FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets  # noqa: E402
+from coach.contracts import Det, FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets  # noqa: E402
 
 RECIPE = Recipe.load(ROOT / "laptop" / cfg.recipe_path)
 FRAMES = {p.stem: cv2.imread(str(p)) for p in (ROOT / "tools" / "test_frames").glob("*.jpg")}
@@ -224,10 +224,115 @@ async def s_always_speaks():
     check(f"no silent turns out of {len(ASK)}", not silent, f"silent: {silent}" if silent else "")
 
 
+async def s_no_key_drill():
+    print("12. drill: no API credentials -> canned line, no crash")
+    import os
+    saved = {k: os.environ.pop(k, None) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    try:
+        client = anthropic.AsyncAnthropic(max_retries=0, timeout=10)
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+    agent, st, _, _ = build(client=client)
+    sink = Sink()
+    stats = await agent.turn("Where do I start?", [], sink)
+    if stats.error is None:
+        print("  SKIP  credentials were found another way (e.g. `ant auth login`), nothing to drill")
+        return
+    check("canned line spoken, error says credentials", sink.sentences == [RECIPE.steps[0].fallback] and "credentials" in stats.error,
+          f"{stats.error} | {sink.sentences}")
+
+
+async def s_refusal_drill():
+    print("13. drill: forced refusal -> canned line")
+    from types import SimpleNamespace as NS
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def __aiter__(self):
+            async def g():
+                if False:
+                    yield
+            return g()
+
+        async def get_final_message(self):
+            return NS(stop_reason="refusal", content=[], usage=None)
+    client = NS(beta=NS(messages=NS(stream=lambda **kw: Stream())))
+    agent, st, _, _ = build(client=client)
+    sink = Sink()
+    stats = await agent.turn("Where do I start?", [], sink)
+    check("canned line spoken, error=refusal, system event logged",
+          sink.sentences == [RECIPE.steps[0].fallback] and stats.error == "refusal"
+          and any("agent fallback" in e.text for e in st.events), f"{stats.error} | {sink.sentences}")
+
+
+async def s_plain_language():
+    print("14. plain-language mode: short sentences, no numbers")
+    agent, st, _, _ = build()
+    agent.plain = True
+    sink = Sink()
+    await agent.turn("How do I cut the avocado?", frames("avocado_hold"), sink)
+    words = [len(x.split()) for x in sink.sentences]
+    digits = any(ch.isdigit() for x in sink.sentences for ch in x)
+    check("every sentence <= 14 words and no digits", sink.sentences and max(words) <= 14 and not digits,
+          f"words={words} | {' | '.join(sink.sentences)}")
+
+
+async def s_spatial():
+    print("15. spatial wording: says where the object is")
+    agent, st, aimer, _ = build()
+    h, w = FRAMES["avocado_hold"].shape[:2]
+    st.dets = [Det("lime", 0.9, (w * 0.10, h * 0.70, w * 0.20, h * 0.90)), Det("bowl", 0.9, (w * 0.80, h * 0.10, w * 0.95, h * 0.30)),
+               Det("avocado", 0.9, (w * 0.45, h * 0.40, w * 0.55, h * 0.60))]
+    sink = Sink()
+    await agent.turn("Where's the lime?", frames("avocado_hold"), sink)
+    said = " ".join(sink.sentences).lower()
+    check("mentions left (lime is on the user's left)", "left" in said, said[:140])
+
+
+async def s_where_am_i():
+    print("16. 'where was I?' gives step + next action")
+    agent, st, _, _ = build(step=2)
+    sink = Sink()
+    await agent.turn("Wait, where was I?", frames("mash_bowl"), sink)
+    said = " ".join(sink.sentences).lower()
+    check("names the step (3 / three / mash)", any(k in said for k in ("step 3", "step three", "third", "mash")), said[:160])
+
+
+async def s_yes_advances():
+    print("17. coach asked 'ready to move on?', user says yes -> propose_done")
+    agent, st, _, _ = build(step=2)
+    ask = "[check-in: the camera thinks step 3 (mash) is finished - it looks mashed. Ask the user in one short sentence if they're ready to move on.]"
+    s1 = Sink()
+    await agent.turn(ask, frames("mash_bowl"), s1)
+    stats = await agent.turn("Yes, I'm ready.", frames("mash_bowl"), Sink())
+    check("asked a question, then propose_done on the yes", bool(s1.sentences) and "propose_done" in stats.tools,
+          f"asked={s1.sentences} tools={stats.tools}")
+
+
+async def s_talk_less():
+    print("18. 'talk less' lowers the check-in level and the coach acknowledges")
+    from coach.checkin import CheckIns
+    agent, st, _, _ = build()
+    agent.checkins = CheckIns(st, agent, None, None, FakeSteps(st), level="normal")
+    sink = Sink()
+    await agent.turn("Please talk less.", frames("avocado_hold"), sink)
+    check("level is now gentle and it said something", agent.checkins.level == "gentle" and bool(sink.sentences),
+          f"level={agent.checkins.level} | {' | '.join(sink.sentences)}")
+
+
 async def main():
     only = sys.argv[1:]            # optional: scenario names, e.g. `always_speaks`
     for scenario in (s_cache, s_point_and_defer, s_not_visible, s_barge_in, s_propose_done,
-                     s_long_conversation, s_checkin, s_fallback, s_timeout, s_no_camera, s_always_speaks):
+                     s_long_conversation, s_checkin, s_fallback, s_timeout, s_no_camera, s_always_speaks,
+                     s_no_key_drill, s_refusal_drill, s_plain_language, s_spatial, s_where_am_i, s_yes_advances,
+                     s_talk_less):
         if only and scenario.__name__[2:] not in only:
             continue
         try:

@@ -10,7 +10,7 @@ import numpy as np
 
 from coach.agent import KEEP_TURNS, Agent, SentenceSplitter, make_handlers, validate_tool_input
 from coach.config import Config
-from coach.contracts import FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets
+from coach.contracts import Det, FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 CFG = Config()
@@ -609,3 +609,105 @@ def test_fast_mode_is_never_sent_to_models_that_dont_support_it():
     assert "speed" not in agent._params([])
     run(agent.prewarm())
     assert "speed" not in client.creates[0]
+
+
+# ───────────── accessibility (C.md 4b) ─────────────
+
+from coach.agent import SYSTEM, positions  # noqa: E402
+
+
+def _det(name, cx, cy, conf=0.9):
+    return Det(name, conf, (cx - 5, cy - 5, cx + 5, cy + 5))
+
+
+def test_positions_in_words():
+    dets = [_det("lime", 100, 400), _det("bowl", 320, 100), _det("onion", 600, 300), _det("hand", 320, 400),
+            _det("lime", 500, 100, conf=0.2)]
+    assert positions(dets, 640, 480) == {"lime": "left, near", "bowl": "centre, far", "onion": "right, near"}
+
+
+def test_note_says_where_things_are_and_what_the_coach_last_said():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    s1 = FakeStream([text("Press down with the fork now. ")])
+    s2 = FakeStream([text("Okay, keep going like that. ")])
+    agent, st, client, _ = make_agent(s1, s2)
+    st.dets = [_det("lime", 100, 400), _det("bowl", 320, 100)]
+    run(agent.turn("how's this?", [frame], Sink()))
+    run(agent.turn("and now?", [frame], Sink()))
+    note = client.requests[1]["messages"][-1]["content"][-1]["text"]
+    assert "visible: bowl (centre, far), lime (left, near) |" in note
+    assert 'you last said: "Press down with the fork now."' in note
+
+
+def test_no_positions_without_frames():
+    agent, st, client, _ = make_agent(FakeStream([text("Okay, I'll go from the recipe. ")]))
+    run(agent.turn("hi", [], Sink()))
+    note = client.requests[0]["messages"][-1]["content"][-1]["text"]
+    assert "(left" not in note and "(centre" not in note and "(right" not in note and "visible: avocado" in note
+
+
+def test_plain_language_can_be_switched_on_and_off_by_voice():
+    streams = [FakeStream([text("Sure, using simple words now. ")]) for _ in range(4)]
+    agent, st, client, _ = make_agent(*streams)
+
+    def turn_text(i):
+        return client.requests[i]["messages"][-1]["content"][-1]["text"]
+    run(agent.turn("how do I cut it?", [], Sink()))
+    run(agent.turn("can you say it simpler", [], Sink()))
+    run(agent.turn("and then?", [], Sink()))
+    run(agent.turn("ok back to normal", [], Sink()))
+    assert "[mode: plain]" not in turn_text(0)
+    assert "[mode: plain]" in turn_text(1) and "[setting changed: plain language is now ON]" in turn_text(1)
+    assert "[mode: plain]" in turn_text(2) and "setting changed" not in turn_text(2)          # sticky, no repeat
+    assert "[mode: plain]" not in turn_text(3) and "plain language is now OFF" in turn_text(3)
+
+
+def test_plain_language_can_start_on_from_config():
+    agent, *_ = make_agent()
+    assert agent.plain is False
+    st = State(RECIPE)
+    assert Agent(Config(plain_language=True), st, {}).plain is True
+
+
+def test_talk_less_and_more_change_the_checkin_level():
+    from coach.checkin import CheckIns
+    streams = [FakeStream([text("Okay, I'll stay quieter. ")]) for _ in range(5)]
+    agent, st, client, _ = make_agent(*streams)
+    agent.checkins = CheckIns(st, agent, None, None, FakeSteps(st), level="normal")
+    run(agent.turn("please talk less", [], Sink()))
+    assert agent.checkins.level == "gentle"
+    run(agent.turn("talk less", [], Sink()))
+    assert agent.checkins.level == "off"
+    run(agent.turn("talk less", [], Sink()))                                   # already off: nothing to change
+    assert agent.checkins.level == "off"
+    run(agent.turn("you can talk more", [], Sink()))
+    assert agent.checkins.level == "gentle"
+    last = client.requests[3]["messages"][-1]["content"][-1]["text"]
+    assert "[setting changed:" in last and "check-ins: gentle" in last
+    assert "setting changed" not in client.requests[2]["messages"][-1]["content"][-1]["text"]
+
+
+def test_preferences_ignore_check_in_turns_and_unrelated_speech():
+    from coach.checkin import CheckIns
+    streams = [FakeStream([text("Fine, that sounds good. ")]), FakeStream([text("SKIP")])]
+    agent, st, client, _ = make_agent(*streams)
+    agent.checkins = CheckIns(st, agent, None, None, FakeSteps(st), level="normal")
+    run(agent.turn("how do I cut the avocado, and how simple can it be?", [], Sink()))      # not a request
+    run(agent.turn("[check-in: they said talk less simpler too fast]", [], Sink()))           # app text, never a preference
+    assert agent.plain is False and agent.checkins.level == "normal"
+
+
+def test_prompt_has_the_accessibility_rules_and_no_time_pressure():
+    for must in ("[mode: plain]", "Where am I?", "on your left", "Never rush"):
+        assert must in SYSTEM
+    assert "quickly" not in SYSTEM.replace('no "quickly"', "")                # only appears as the thing to avoid
+
+
+def test_backstop_says_where_the_object_is():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    s1 = FakeStream([tool("a", "point_at", {"name": "lime"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    st.dets = [_det("lime", 100, 400)]
+    sink = Sink()
+    run(agent.turn("show me the lime", [frame], sink))
+    assert sink.sentences == ["Here's the lime, on your left."]

@@ -49,7 +49,8 @@ def linear_calib() -> Calibration:
 
 
 def args(*extra):
-    return app_main.parse_args(["--type", "--no-yolo", "--no-s3", "--fake-agent", "--cam", "black", *extra])
+    return app_main.parse_args(["--type", "--no-yolo", "--no-s3", "--fake-agent", "--cam", "black",
+                                "--no-dashboard", "--no-checkins", *extra])
 
 
 @pytest.mark.timeout(15)
@@ -198,3 +199,112 @@ def test_closed_loop_needs_calibration(monkeypatch):
                                          agent=FakeAgent())
 
     assert asyncio.run(go()).aimer.closed_loop is False
+
+
+
+@pytest.mark.timeout(15)
+def test_type_mode_runs_checkins_and_serves_the_dashboard(monkeypatch):
+    """With a real (stub) agent the check-in loop starts, typing counts as activity, the dashboard answers."""
+    import dataclasses
+    import socket
+    import urllib.request
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    monkeypatch.setattr(app_main, "cfg", dataclasses.replace(app_main.cfg, dashboard_port=port))
+
+    class StubAgent(FakeAgent):
+        pass
+
+    async def go():
+        a = app_main.parse_args(["--type", "--no-yolo", "--no-s3", "--cam", "black"])
+        app = await app_main.App.create(a, frames=FakeFrames(), link=RecLink(), calib=linear_calib(), agent=StubAgent())
+        app.speech = None
+        from coach.contracts import FakeSpeech
+        app.speech = FakeSpeech()
+        app._start_dashboard()
+        app._start_checkins()
+        assert app.checkins is not None and app.checkins.level == app_main.cfg.checkins
+        await asyncio.sleep(0.6)
+        body = await asyncio.to_thread(lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/state", timeout=3).read())
+        # typing resets the quiet timer
+        before = app.state.last_activity
+        await app_main.type_loop(app, ["where is the lime"])
+        assert app.state.last_activity > before and app.state.transcript == "where is the lime"
+        await app.shutdown()
+        return body
+
+    body = asyncio.run(go())
+    assert b'"step"' in body and b'"session"' in body
+
+
+def test_new_flags_parse():
+    a = app_main.parse_args(["--no-checkins", "--no-dashboard"])
+    assert a.no_checkins and a.no_dashboard
+
+
+@pytest.mark.timeout(10)
+def test_type_mode_sends_no_frames_when_the_camera_is_down():
+    sent = []
+    dead = FakeFrames()
+    dead.connected = False
+
+    async def go():
+        app = await app_main.App.create(args(), frames=dead, link=RecLink(), calib=linear_calib(),
+                                        agent=FakeAgent())
+        orig = app.agent.turn
+
+        async def spy(text, frames, on_sentence):
+            sent.append(len(frames))
+            return await orig(text, frames, on_sentence)
+        app.agent.turn = spy
+        await app.run(lines=["hello there"])
+
+    asyncio.run(go())
+    assert sent == [0]
+
+
+@pytest.mark.timeout(20)
+def test_full_seven_step_run_with_pushback_and_a_vision_ask():
+    """Type through the whole recipe: a push-back on step 3, a vision 'ask' + confirm on step 5, finish at 7."""
+    from coach.steps import StepVerdict
+
+    link = RecLink()
+
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=link, calib=linear_calib(),
+                                        agent=FakeAgent())
+        from coach.contracts import FakeSpeech
+        app.speech = FakeSpeech()
+        clock = {"t": 0.0}
+
+        def tick():
+            clock["t"] += 10.0                         # every call is a separate utterance (> the 3 s guard)
+            return clock["t"]
+        app.steps._clock = tick
+        app.steps.verdict_provider = lambda step: StepVerdict(False, 0.9, "still big chunks") if step == 2 else None
+        n = len(app.state.recipe.steps)
+        log = []
+        for i in range(n):
+            assert app.state.step == i
+            if i == 2:
+                await app_main.type_loop(app, ["ok I'm done"])
+                assert app.state.step == 2, "first 'done' on step 3 must be pushed back"
+                log.append("push_back")
+            if i == 4:
+                assert app.steps.propose_done("vision", "looks done") == "ask" and app.state.step == 4
+                assert app.steps.confirm() == "advance"
+                log.append("ask+confirm")
+                continue
+            await app_main.type_loop(app, ["ok I'm done"])
+        return app, log
+
+    app, log = asyncio.run(go())
+    assert log == ["push_back", "ask+confirm"]
+    assert app.steps.finished and app.state.step == len(app.state.recipe.steps) - 1
+    shown = [t for _, t in link.texts if t.startswith("Step ")]
+    assert shown[0].startswith("Step 2") and len(shown) == len(app.state.recipe.steps) - 1
+    assert any("watcher disagrees" in e.text for e in app.state.events)
+    assert any("asking the user" in e.text for e in app.state.events)

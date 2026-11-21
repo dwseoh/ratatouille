@@ -30,6 +30,11 @@ class Config:
     # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
     # usually under 1.5 s but has an occasional slow turn; Haiku is steadier, so 3 is enough there.
     first_token_timeout_s: float = float(_env("FIRST_TOKEN_TIMEOUT_S", "5.0"))
+    # How often the coach speaks unprompted: off | gentle (45 s of silence) | normal (20 s). Users can say "talk less".
+    checkins: str = _env("CHECKINS", "normal")
+    # Accessibility: start in plain-language mode (short sentences, one action each, no idioms or numbers).
+    # Users can also say "say it simpler" / "too fast" during the session.
+    plain_language: bool = _env("PLAIN_LANGUAGE", "0").lower() in ("1", "true", "yes")
     watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # B3: cheap model that reads frames in the background
     frames_per_turn: int = 3         # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending

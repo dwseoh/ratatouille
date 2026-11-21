@@ -16,7 +16,7 @@ Read first: `laptop/coach/contracts.py` (the interfaces), `docs/task-specs.md` (
 | `laptop/coach/steps.py` | `Steps` (implements `StepsAPI`): the only code that changes `State.step` (new) |
 | `laptop/coach/checkin.py` | Check-in loop: the coach speaks up on its own (new) |
 | `laptop/coach/dashboard.py` | FastAPI dashboard: `/`, `/state`, `/stream` |
-| `laptop/coach/try_agent.py` | Typed-input test harness, no voice needed (new) |
+| `laptop/coach/agent_cli.py` | Typed-input test harness, no voice needed (`python -m coach.agent_cli`) |
 | `laptop/recipes/guacamole.json` | The recipe (already in the new facts format) |
 | `laptop/tests/test_steps.py` | Step machine tests (new) |
 
@@ -44,6 +44,8 @@ The draft works but needs these changes. Do them in this order.
 
 ### 1.1 Model and request settings
 
+- **Model update:** the default is now Opus 5.5 with fast mode (`CLAUDE_MODEL`, `CLAUDE_FAST` in `config.py`). The Haiku
+  notes below still apply if you switch back to Haiku 5.5.
 - Model from config: `cfg.model`, which is now `claude-haiku-5-5` (`.env.example` already says so; change the
   default in `config.py` too, and tell the team since `config.py` is shared).
 - Effort `low`, and turn thinking **off** for speed: `thinking={"type": "disabled"}` plus
@@ -101,12 +103,12 @@ Steps:
 - Call propose_done when the user says they finished, or the frames clearly show the step's done_when.
 Check-ins:
 - A message starting with "[check-in" is not from the user. Comment briefly only if something is worth saying
-  (progress, a mistake, the next action). Otherwise reply with exactly "-" and nothing else.
+  (progress, a mistake, the next action). Otherwise reply with just `SKIP` and nothing else (the agent drops it).
 RECIPE:
 <the recipe JSON>
 ```
 
-Tune it with `try_agent` (section 6). Keep this text stable during a run, because it's the cached part.
+Tune it with `agent_cli` (section 6) and `tools/live_agent_check.py`. Keep this text stable during a run, because it's the cached part.
 
 ### 1.4 Every turn's message
 
@@ -127,7 +129,7 @@ Feed `on_sentence` the moment a sentence exists, so TTS starts early.
 - If 120 characters go by without an ending, split at the last comma.
 - Strip markdown characters (`*`, `#`, leading `-`) before speaking.
 - Flush whatever is left at the end of the stream.
-- Never speak `-` (the check-in "nothing to say" answer).
+- Never speak `SKIP` (the check-in "nothing to say" answer): the agent drops it.
 - Mark `LAT_FIRST_TOKEN` on the first text token, if a `TurnLatency` is passed in (agree with B how it's shared:
   simplest is `self.state.turns[-1].mark(...)`).
 
@@ -238,7 +240,7 @@ async def checkin_loop(state, agent, speech, frames, steps):
             text = f"[check-in: step {state.step + 1} just started. Introduce it in your own words and point at what they need.]"
             pending_intro = False
         elif quiet_for > 20.0:
-            text = "[check-in: comment briefly only if something is worth saying, otherwise reply with -]"
+            text = "[check-in: comment briefly only if something is worth saying, otherwise reply with just SKIP]"
         else:
             continue
         await agent.turn(text, frames.recent(3), lambda s: speech.say(s, Priority.PROACTIVE))
@@ -258,7 +260,7 @@ Mostly covered in 1.8. Also:
 - No camera (`frames.connected` False): send the turn without images, and add "camera offline" to the note so
   the model says so once.
 - If the API key is missing at startup, print a clear error and run with `FakeAgent`-style canned lines.
-- Offline mode is cut (see cut-list.md).
+- Offline mode is cut (see cut-list.md). So is the knife-near-hand warning: knife safety lives in the step `tips`.
 
 ## 4b. Accessibility features (v1)
 
@@ -273,7 +275,7 @@ Do these after check-ins work (Sat late AM / Sun AM). Settings go in `config.py`
      Use concrete amounts instead ("about half the lime", "a pinch", "until it looks like this") and point at it.
    - Slower speech is B's side (TTS speed or a short pause between sentences). Agree with Hanjing on a
      `SPEECH_RATE` setting; the agent just sends shorter sentences.
-   - Test: in `try_agent`, "say it simpler" then "how do I cut the avocado" gives short, number-free sentences.
+   - Test: in `agent_cli` (or `tools/live_agent_check.py`), "say it simpler" then "how do I cut the avocado" gives short, number-free sentences.
 2. **"Where am I?" / "what was I doing?"**
    - Prompt rule: always answer with the current step number + `short` + the last thing they did, then the next action.
    - Keep a `last_action` string (the last sentence the coach said about the task) and put it in the turn text,
@@ -347,44 +349,29 @@ dashboard doesn't need it. Stretch: a `/calibrate` page where clicking the video
 `POST /calibrate/click {"x", "y"}` in **frame** pixels (convert from the displayed size using the image's
 `naturalWidth`/`naturalHeight`), and A's calibrator registers a callback for it. Only if dw127 asks for it.
 
-## 6. Typed-input harness (`try_agent.py`)
+## 6. Typed-input harness (`agent_cli.py`)
 
-Your main tool for the first day. No voice, no hardware.
+Your main tool for the first day. No voice, no hardware, real API key.
 
-```python
-# cd laptop && python -m coach.try_agent [--cam] [--say]
-import asyncio, sys
-from .config import CONFIG as cfg
-from .contracts import Recipe, State, FakeAimer, FakeSpeech, FakeFrames, FakeLink, fake_dets
-from .agent import Agent
-from .steps import Steps
-
-async def main():
-    st = State(Recipe.load(cfg.recipe_path), dets=fake_dets(), session="active")
-    frames = FakeFrames(0 if "--cam" in sys.argv else None)
-    link, aimer, speech = FakeLink(), FakeAimer(st), FakeSpeech(say_aloud="--say" in sys.argv)
-    steps = Steps(st, link)
-    agent = Agent(cfg, st, aimer, steps, link)
-    await agent.prewarm()
-    while True:
-        text = await asyncio.to_thread(input, "you> ")
-        if text == "/ci":                       # fake a check-in
-            text = "[check-in: comment briefly only if something is worth saying, otherwise reply with -]"
-        stats = await agent.turn(text, frames.recent(3), speech.say)
-        print(f"  ttft {stats.ttft_s and round(stats.ttft_s, 2)}s  tools {stats.tools}  {stats.error or ''}")
-
-asyncio.run(main())
+```
+cd laptop && python -m coach.agent_cli                    # black frames, every recipe object "visible"
+python -m coach.agent_cli --webcam 0 --say                # real webcam frames, speak replies with macOS `say`
+python -m coach.agent_cli --visible avocado knife bowl    # choose what the fake detector "sees"
 ```
 
-Things to try: "where do I start?", "where's the lime?" (visible), "where's the salt?" (not in `fake_dets`),
-"ok I'm done", "how chunky should it be?", `/ci`. Watch: first-token time, whether `point_at` comes before the
-sentence, whether it ever reads the recipe out.
+It prints each spoken sentence, the tool calls, `ttft`, the cache line (`cache: read N / write N`) and the state
+note. Things to try: "where do I start?", "where's the lime?" (visible), "where's the salt?" (not visible),
+"how chunky should it be?", "say it simpler", "talk less". Watch: first-token time, whether it names where things
+are, whether it ever reads the recipe out, and that the cache read is large on the second turn.
+For the whole app without voice use `python -m coach.main --type` (adds the intents router, check-ins, the dashboard).
+`python -m tools.try_dashboard` shows the dashboard with fake data. The scripted checks are `tools/live_agent_check.py`
+(28 live checks) and `tools/live_watcher_check.py`. `docs/roles/C-qa.md` is the manual test script.
 
 ## 7. Plan and handoffs
 
 | When | Do | Handoff |
 |---|---|---|
-| Fri night | K0 with the team. Agent changes 1.1-1.6, `try_agent.py`, `steps.py` + tests. | Post first-token numbers for Haiku in the channel. |
+| Fri night | K0 with the team. Agent changes 1.1-1.6, `agent_cli.py`, `steps.py` + tests. | Post first-token numbers for Haiku in the channel. |
 | Sat 9-10 am | Finish `cancel()` (1.7) and the fallback (1.8). | **Sat 10 am: `Agent.turn()` works with typed input. Wire it into Hanjing's pipeline together.** |
 | Sat late AM | Check-ins (`checkin.py`). Prompt tuning with real voice. | Agree with Hanjing: who calls `propose_done("user")`, `last_activity`, latency marks. |
 | Sat PM | Dashboard v1: `/stream`, `/state`, `/` with a fake State. History trimming (1.9). | Swap `FakeAimer` for dw127's real Aimer when it's ready (~6 pm). |

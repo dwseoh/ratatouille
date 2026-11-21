@@ -1,6 +1,6 @@
 """Watcher (B3, loop 3): looks at the camera on its own, so the coach notices things without being asked.
 
-Three jobs
+Two jobs
   1. Event log:   a cheap vision model (Haiku) reads 3-4 recent frames and reports what changed
                   ("avocado halved") -> State.events, which the agent's state note and the dashboard read.
   2. Step done?:  the same call judges the current step's `done_when`.
@@ -8,18 +8,18 @@ Three jobs
                       ask the user ("looks mashed, ready for the lime?"); the watcher never advances anything.
                     - the latest verdict is cached for B2: `latest_verdict(step)` is Steps' verdict_provider,
                       so a premature "I'm done" can be pushed back (it must not block, hence cached).
-  3. Safety:      local, no LLM: knife box touching/near a hand box for 3 detection updates in a row ->
-                  Speech.say("Careful, fingers!", SAFETY), at most once per 10 s.
 
-The watcher speaks in exactly two places, and both are guarded:
-  - the safety line: deliberately NOT gated (a knife near fingers can't wait for a pause);
-  - the "ready for the next step?" question: only when nobody is talking AND no agent turn is running (a new
-    agent turn cancels the one in flight, which would kill the answer to the user's own question) AND things have
-    been quiet for ASK_SETTLE_S, so it never lands right after the user or the coach stops talking.
+(The local knife-near-hand warning was cut: it would fire constantly while cutting. See docs/cut-list.md.
+Knife safety lives in the recipe `tips` and the agent's prompt instead.)
+
+The watcher speaks in exactly one place, and it is guarded: the "ready for the next step?" question, only when
+nobody is talking AND no agent turn is running (a new agent turn cancels the one in flight, which would kill the
+answer to the user's own question) AND things have been quiet for ASK_SETTLE_S, so it never lands right after the
+user or the coach stops talking.
 
 When the model is called (never while the coach or the user is talking, never while the session is idle,
 never more often than MIN_GAP_S): the visible-object set changed, the user said "done", `request_check()`
-was called, or STEP_INTERVAL_S passed. Calls run in a background task, so safety checks never wait on one.
+was called, or STEP_INTERVAL_S passed. Calls run in a background task.
 
 `confidence` in the model's answer is how sure it is of `step_done` (either value), which is what Steps expects:
 "not done, 0.9" = a confident push-back.
@@ -29,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import re
 import time
 from typing import Awaitable, Callable
@@ -37,12 +36,12 @@ from typing import Awaitable, Callable
 import anthropic
 
 from .agent import jpeg_block
-from .contracts import FrameSource, Priority, State, StepsAPI
+from .contracts import FrameSource, State, StepsAPI
 from .steps import StepVerdict
 
 log = logging.getLogger(__name__)
 
-TICK_S = 0.1                # loop period: fast enough for the 3-frame safety check
+TICK_S = 0.1                # loop period
 MIN_GAP_S = 3.0             # never call the model more often than this
 STEP_INTERVAL_S = 10.0      # ...but look at least this often while a step is running
 FRAMES = 4                  # frames per call (~0.5 s apart)
@@ -55,10 +54,6 @@ VERDICT_TTL_S = 15.0        # a cached verdict older than this isn't offered to 
 CALL_TIMEOUT_S = 10.0
 LOG_LINES = 15              # recent events shown to the model
 
-KNIFE_NEAR_PX = 40          # knife within this many px of a hand...
-KNIFE_FRAMES = 3            # ...for this many detection updates in a row
-SAFETY_COOLDOWN_S = 10.0
-SAFETY_LINE = "Careful, fingers!"
 
 SYSTEM = """You watch a chest camera while someone follows a recipe, and report what changed.
 Reply ONLY with JSON matching the schema.
@@ -88,13 +83,6 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
 
 
-def box_gap(a, b) -> float:
-    """Distance in px between two (x1, y1, x2, y2) boxes; 0 when they touch or overlap."""
-    dx = max(b[0] - a[2], a[0] - b[2], 0.0)
-    dy = max(b[1] - a[3], a[1] - b[3], 0.0)
-    return math.hypot(dx, dy)
-
-
 class Watcher:
     def __init__(self, cfg, state: State, frames: FrameSource, speech, steps: StepsAPI,
                  on_ask: OnAsk | None = None, busy: Callable[[], bool] | None = None, client=None,
@@ -112,9 +100,6 @@ class Watcher:
         self._verdict: tuple[int, StepVerdict, float] | None = None   # (step, verdict, when)
         self._proposed_step: int | None = None             # step we've already suggested "done" for
         self._pending_ask: tuple[int, str] | None = None   # ask the user once it's quiet
-        self._dets_obj = None
-        self._knife_streak = 0
-        self._last_warning: float | None = None
 
     # ----- public -----
 
@@ -143,12 +128,10 @@ class Watcher:
                 self._task.cancel()
 
     async def tick(self) -> None:
-        """One pass: safety, then maybe start a model check, then maybe deliver a pending question."""
+        """One pass: maybe start a model check, then maybe deliver a pending question."""
         if self.state.session != "active":
-            self._knife_streak = 0
             self._events_seen = len(self.state.events)
             return
-        await self._safety()
         if self._agent_busy():
             self._last_busy = self._clock()
         reason = self._why_check()
@@ -280,24 +263,3 @@ class Watcher:
             return False
         return self._clock() - self._last_busy >= BUSY_SETTLE_S
 
-    # ----- safety (local, no LLM) -----
-
-    def _knife_near_hand(self) -> bool:
-        knives = [d for d in self.state.dets if d.name == "knife"]
-        hands = [d for d in self.state.dets if d.name == "hand"]
-        return any(box_gap(k.box, h.box) <= KNIFE_NEAR_PX for k in knives for h in hands)
-
-    async def _safety(self) -> None:
-        dets = self.state.dets
-        if dets is self._dets_obj:
-            return                                 # no new detection update since the last tick
-        self._dets_obj = dets
-        self._knife_streak = self._knife_streak + 1 if self._knife_near_hand() else 0
-        if self._knife_streak < KNIFE_FRAMES:
-            return
-        now = self._clock()
-        if self._last_warning is not None and now - self._last_warning < SAFETY_COOLDOWN_S:
-            return
-        self._last_warning = now
-        self.state.log("vision", "knife close to fingers - warned")
-        await self.speech.say(SAFETY_LINE, Priority.SAFETY)

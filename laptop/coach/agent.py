@@ -26,6 +26,7 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -46,6 +47,16 @@ How to reply
   step and what comes next; a question about the food -> your honest read of the frames.
 - Plain speech only: no lists, markdown or emoji. Never more than 2 sentences.
 - Speak first, then call tools.
+- When you point at something, also say where it is ("the lime, on your left") using the positions in the
+  state line: left / centre / right, and near (close to the user) / far.
+- "Where am I?" / "what was I doing?": give the current step number and name, what they last did (from the
+  recent events), then the next action. The state line has what you last said.
+- Never rush the user: no "quickly", "hurry" or "right away". They set the pace; a step only ends when they say so.
+- If the message has a line "[mode: plain]", use plain language: sentences under 12 words, one action per
+  sentence, no idioms, no numbers (say "about half the lime", "a pinch", "until it looks like this"), and always
+  point at what you mean. Give only the next one or two actions, not the whole procedure, and never join two
+  actions with "then" or "and": split them into separate short sentences.
+  If it has "[setting changed: ...]", confirm that change in one short sentence.
 - Every message starts with a [state ...] line from the app: the current step, which objects the camera
   currently sees, where the laser points, and recent events. Trust it for what is visible.
 
@@ -54,7 +65,8 @@ Tools
   If the user asks about something that isn't visible, say you can't see it instead of pointing.
 - laser_off(): turn the laser off.
 - propose_done(): call it only when the frames and the user's words show the current step is really
-  finished. The app decides whether to advance.
+  finished. The app decides whether to advance. If you just asked whether they're ready to move on and they
+  say yes, call it.
 - show_text(text): up to 20 characters on the wearable's display.
 If a tool result says not_visible or error, you may mention it briefly on your next turn.
 If the state line says the camera is offline, you can't see anything: tell the user once, briefly, then carry on
@@ -244,6 +256,33 @@ class _Turn:
     stop_reason: str | None = None
 
 
+def positions(dets, width: int, height: int) -> dict[str, str]:
+    """Where each visible object is, in words: "left, near". Left/right are the user's (a chest camera looks the
+    way they face); near = bottom half of the frame (close to them), far = top half. Best detection per name."""
+    out: dict[str, str] = {}
+    for d in sorted(dets, key=lambda d: -d.conf):
+        if d.name in out or d.name == "hand":
+            continue
+        cx, cy = d.center
+        horizontal = "left" if cx < width / 3 else "right" if cx > 2 * width / 3 else "centre"
+        out[d.name] = f"{horizontal}, {'near' if cy > height / 2 else 'far'}"
+    return out
+
+
+_PLAIN_ON = ("say it simpler", "say that simpler", "simpler words", "simpler please", "too fast", "slow down",
+             "slower please", "explain it simply", "keep it simple", "use simple words")
+_PLAIN_OFF = ("back to normal", "normal mode", "you can use bigger words", "more detail please")
+_TALK_LESS = ("talk less", "be quieter", "fewer comments", "stop commenting", "don't interrupt", "dont interrupt",
+              "say less")
+_TALK_MORE = ("talk more", "say more", "more comments", "check in more")
+
+
+def _has(text: str, phrases) -> bool:
+    t = " " + re.sub(r"[^a-z' ]+", " ", text.lower()) + " "
+    t = re.sub(r"\s+", " ", t)
+    return any(f" {p} " in t for p in phrases)
+
+
 def _missing_credentials(e: BaseException) -> bool:
     """The SDK raises a bare TypeError (not an APIError) when no API key / token is configured."""
     return isinstance(e, TypeError) and "authentication" in str(e).lower()
@@ -277,6 +316,11 @@ class Agent:
         self._cancelled = False
         self._fallback_steps: set[int] = set()     # steps whose canned line we've already spoken
         self._camera_told = False                  # told the user the camera is offline (once per outage)
+        self.recent_sentences: deque[str] = deque(maxlen=3)   # what the coach last said (dashboard captions)
+        self.plain = bool(getattr(cfg, "plain_language", False))   # plain-language mode (accessibility)
+        self.checkins = None                       # CheckIns, set by main, so "talk less" can change its level
+        self._positions: dict[str, str] = {}       # object -> "left, near" for the frames of the current turn
+        self.last_usage = None                     # token usage of the last request (cache_read_input_tokens ...)
 
     # ----- public API -----
 
@@ -347,11 +391,42 @@ class Agent:
 
     # ----- turn plumbing -----
 
-    def _note(self) -> str:
+    def _note(self, frames: list | None = None) -> str:
         note = self.state.note()
+        self._positions = {}
+        if frames:                          # say where things are, not just that they are visible
+            h, w = frames[-1].shape[:2]
+            self._positions = positions(self.state.dets, w, h)
+        if self._positions:
+            where = ", ".join(f"{n} ({p})" for n, p in sorted(self._positions.items()))
+            note, hit = re.subn(r"visible: [^|]*", lambda m: f"visible: {where} ", note, count=1)
+            if not hit:
+                note += f" | visible: {where}"
+        if self.recent_sentences:
+            note += f' | you last said: "{self.recent_sentences[-1][:120]}"'
         if self._notices:
             note += " | last turn: " + "; ".join(self._notices)
         return note
+
+    def _apply_preferences(self, text: str) -> list[str]:
+        """"say it simpler", "talk less" ...: change the setting locally and tell the model, so it confirms."""
+        changes = []
+        if _has(text, _PLAIN_ON) and not self.plain:
+            self.plain = True
+            changes.append("plain language is now ON")
+        elif _has(text, _PLAIN_OFF) and self.plain:
+            self.plain = False
+            changes.append("plain language is now OFF")
+        ci = self.checkins
+        if ci is not None:
+            order = ["off", "gentle", "normal"]
+            if _has(text, _TALK_LESS) and ci.level != "off":
+                ci.set_level(order[order.index(ci.level) - 1])
+                changes.append(f"you will now speak up on your own less often (check-ins: {ci.level})")
+            elif _has(text, _TALK_MORE) and ci.level != "normal":
+                ci.set_level(order[order.index(ci.level) + 1])
+                changes.append(f"you will now speak up on your own more often (check-ins: {ci.level})")
+        return changes
 
     def _begin(self, user_text: str, frames: list) -> _Turn:
         step = self.state.step
@@ -360,15 +435,17 @@ class Agent:
             self._pending, self._notices = [], []
         checkin = user_text.startswith("[check-in")
         body = user_text if checkin else f"User: {user_text}"
-        note = self._note()
+        changes = [] if checkin else self._apply_preferences(user_text)
+        note = self._note(frames)
         if frames:
             self._camera_told = False
         else:                               # no camera: say so (once per outage) and send no images
             note += " | camera: OFFLINE, no images" + (" (user already told)" if self._camera_told else " (tell the user once)")
             self._camera_told = self._camera_told or not checkin
+        extra = ("[mode: plain]\n" if self.plain else "") + "".join(f"[setting changed: {c}]\n" for c in changes)
         content = list(self._pending)
         content += [jpeg_block(f, self.cfg.frame_max_px) for f in frames]
-        content.append({"type": "text", "text": f"[{note}]\n{body}"})
+        content.append({"type": "text", "text": f"[{note}]\n{extra}{body}"})
         return _Turn(user={"role": "user", "content": content}, step=step, checkin=checkin,
                      had_pending=bool(self._pending))
 
@@ -423,6 +500,7 @@ class Agent:
                 if tail := splitter.flush():
                     await self._emit(ts, tail, on_sentence)
                 final = await stream.get_final_message()
+                self.last_usage = getattr(final, "usage", None)
         for block in final.content:        # anything whose stop event we didn't see
             if block.type == "tool_use":
                 self._run_tool(ts, block.id, block.name, block.input)
@@ -437,6 +515,7 @@ class Agent:
         if ts.checkin and sentence.strip(".! ").upper() == "SKIP":
             return
         ts.spoken.append(sentence)
+        self.recent_sentences.append(sentence)
         ts.stats.sentences += 1
         await on_sentence(sentence)
 
@@ -470,7 +549,10 @@ class Agent:
                 line = f"Hold on, {reason}." if reason else "Hold on, that doesn't look finished yet."
                 break
             if use.get("name") == "point_at" and obj:
-                line = f"Here's the {obj}." if result == "ok" else (
+                where = self._positions.get(obj, "").split(",")[0]       # "left" / "centre" / "right"
+                here = f"Here's the {obj}" + (f", on your {where}." if where in ("left", "right") else
+                                              ", in the middle." if where == "centre" else ".")
+                line = here if result == "ok" else (
                     f"I can't see the {obj} right now." if result == "not_visible" else line)
         if line is None:                    # nothing to describe: at least say where they are
             line = f"You're on step {self.state.step + 1}: {self.state.current_step.short}."
