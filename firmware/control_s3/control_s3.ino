@@ -144,7 +144,25 @@ void loop() {
   }
   uint32_t now = millis();
   if (laserOn && now - lastCmdMs > WATCHDOG_MS) safeState();  // fail safe
-  if (WiFi.status() != WL_CONNECTED) { safeState(); WiFi.reconnect(); delay(100); }
+  // WiFi dropped: laser off, and retry every 5 s. (Calling reconnect on every loop interrupts the attempt
+  // in progress - "sta is connecting, return error" - and it never gets back on.)
+  static bool wasOnline = true;
+  static uint32_t lastRetry = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (laserOn) safeState();
+    if (wasOnline) {
+      wasOnline = false; lastRetry = now;
+      Serial.println("coach-ctl: wifi lost, retrying every 5 s");
+      snprintf(lines[1], sizeof(lines[1]), "wifi: lost"); lineDirty[1] = true;
+    } else if (now - lastRetry > 5000) {
+      lastRetry = now;
+      WiFi.disconnect(); WiFi.begin(WIFI_SSID, WIFI_PASS);
+    }
+  } else if (!wasOnline) {
+    wasOnline = true;
+    snprintf(lines[1], sizeof(lines[1]), "%s", WiFi.localIP().toString().c_str()); lineDirty[1] = true;
+    Serial.printf("coach-ctl: wifi back, IP %s\n", WiFi.localIP().toString().c_str());
+  }
 
   static uint32_t lastPress = 0; static bool wasDown = false;
   bool down = digitalRead(PIN_BOOT) == LOW;
