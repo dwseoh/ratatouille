@@ -47,8 +47,9 @@ Sketch / scaffolding. Every `TODO` marks unbuilt work. Short version (full plan 
 ## Running (planned)
 
 ```bash
+brew install portaudio        # C library pyaudio compiles against (Pipecat local audio); pip can't install it
 cd laptop
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate   # 3.12: Pipecat + deps aren't verified on 3.14
 pip install -r requirements.txt
 cp .env.example .env   # fill in keys and IPs
 python -m coach.main

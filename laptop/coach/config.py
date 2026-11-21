@@ -29,7 +29,8 @@ class Config:
     # Voice (V1). Deepgram streaming STT + Aura TTS through Pipecat.
     deepgram_api_key: str = _env("DEEPGRAM_API_KEY", "")
     tts_voice: str = _env("TTS_VOICE", "aura-2-helena-en")
-    vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.8"))   # silence before a turn ends
+    vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.2"))   # pause that triggers the smart-turn check
+    turn_fallback_secs: float = float(_env("TURN_FALLBACK_SECS", "0.9"))  # silence that ends a turn when smart-turn isn't sure
 
     yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
     yolo_device: str = _env("YOLO_DEVICE", "mps")   # M2 GPU

@@ -1,39 +1,47 @@
-"""Voice pipeline (V1): mic -> Silero VAD -> Deepgram STT -> TurnProcessor -> Deepgram Aura TTS -> speaker.
+"""Voice (B): mic -> Silero VAD -> Deepgram STT -> smart-turn -> AgentProcessor -> Deepgram Aura TTS -> speaker.
 
-Built on Pipecat 1.16 (pinned in requirements.txt). The LLM step is NOT Pipecat's LLM service:
-`TurnProcessor` hands the finished user utterance to a plain async callback,
+Built on Pipecat 1.16 (pinned in requirements.txt). Implements SpeechAPI from contracts.py and is the
+seam to C's AgentAPI. Pipecat is NOT used for the LLM: `AgentProcessor` hands each finished user
+utterance to `agent.turn(text, frames.recent(3), on_sentence)`, and every sentence it passes to
+`on_sentence` becomes a TTS frame at once.
 
-    on_turn(text, t_speech_end, say)
+Turn end (who decides "the user is finished"):
+  Silero VAD reports a pause after `cfg.vad_stop_secs` (0.2 s). Pipecat's smart-turn model then judges
+  from the audio whether the sentence sounds finished. If yes, the turn ends as soon as Deepgram's
+  finalized transcript is in; if it isn't sure, the turn ends after `cfg.turn_fallback_secs` (0.9 s)
+  of silence. `UserTurnProcessor` emits UserStartedSpeakingFrame / UserStoppedSpeakingFrame for this.
 
-and every sentence the callback passes to `await say(sentence)` is spoken at once. C's agent plugs in
-here (`agent.turn(text, frames, on_sentence=say)`) once contracts.py lands; until then `echo_turn`
-stands in.
+Barge-in: when a user turn starts, `UserTurnProcessor` cuts the coach's audio (InterruptionFrame) and
+`AgentProcessor` cancels the running agent turn (`agent.cancel()` + the task). If the cut-off turn
+hadn't said anything yet, its text is merged into the next turn instead of being answered twice.
 
-Turn end: Silero waits `cfg.vad_stop_secs` (0.8 s) of silence, Pipecat then asks Deepgram to finalize,
-and the finalized transcript ends the turn. If Deepgram already sent everything (its finalize reply
-is empty) a short timer ends the turn instead.
+State fields written here (contracts.State, B is the only writer):
+  transcript, user_talking, speaking, last_activity, turns (one TurnLatency per user turn).
 
-Barge-in: when the user starts speaking, any audio playing is cut (Pipecat InterruptionFrame), the
-running turn task is cancelled and `on_barge_in()` fires (wire to `agent.cancel()`). If the cancelled
-turn hadn't spoken yet, its text is merged into the next turn instead of being answered twice.
-
-Run standalone:  python -m coach.voice   (echo bot; use headphones until V3 echo handling exists)
+Try it:  cd laptop && python -m tools.try_voice     (headphones until the echo gate exists)
 """
+from __future__ import annotations
+
 import asyncio
-import re
 import time
-from typing import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Callable
 
 from loguru import logger
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    DataFrame,
     Frame,
     InterimTranscriptionFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -44,140 +52,172 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
-from pipecat.workers.runner import WorkerRunner
+from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_processor import UserTurnProcessor
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-Say = Callable[[str], Awaitable[None]]
-OnTurn = Callable[[str, float, Say], Awaitable[None]]   # (user_text, t_speech_end monotonic, say)
+from .contracts import (
+    LAT_FIRST_AUDIO,
+    LAT_SPEECH_END,
+    AgentAPI,
+    FrameSource,
+    Priority,
+    State,
+    TurnLatency,
+)
+
+FRAMES_PER_TURN = 3
 
 
-class TurnProcessor(FrameProcessor):
-    """Sits between STT and TTS. Turns transcripts into one call to `on_turn` per user utterance."""
+@dataclass
+class _TurnEndFrame(DataFrame):
+    """Internal marker. UserStoppedSpeakingFrame is a system frame and overtakes the data queue, so the
+    final TranscriptionFrame (pushed just before it) may not be processed yet. Re-queueing this marker
+    behind it makes the turn start only after every transcript of the turn has been read."""
 
-    FINALIZE_WAIT_S = 0.3   # after VAD stop, wait this long for Deepgram's finalized transcript
-    MAX_WAIT_S = 1.0        # ...or up to this long if only interim text has arrived so far
 
-    def __init__(self, on_turn: OnTurn, *, on_interim: Callable[[str], None] | None = None,
-                 on_barge_in: Callable[[], None] | None = None, **kwargs):
+class AgentProcessor(FrameProcessor):
+    """Sits after the turn detector, before TTS. One `agent.turn` per finished user turn."""
+
+    def __init__(self, agent: AgentAPI, frames: FrameSource, state: State, *,
+                 on_interim: Callable[[str], None] | None = None, **kwargs):
         super().__init__(**kwargs)
-        self._on_turn = on_turn
-        self._on_interim = on_interim          # V4 keyword pointing + V5 wake phrase hook here
-        self._on_barge_in = on_barge_in
-        self._finals: list[str] = []
-        self._interim = ""
-        self._carry = ""                        # text of a turn cut off before it said anything
-        self._user_speaking = False
+        self.agent, self.frames, self.state = agent, frames, state
+        self._on_interim = on_interim      # intent router (V4b) hooks in here
+        self._text: list[str] = []         # final transcripts of the current user turn
+        self._carry = ""                   # a turn cut off before it said anything
         self._speech_end: float | None = None
-        self._end_timer: asyncio.Task | None = None
-        self._turn: asyncio.Task | None = None
-        self._turn_text = ""
-        self._turn_spoke = False
-        self.speaking = False                   # bot audio is playing (from the output transport)
+        self._task: asyncio.Task | None = None
+        self._task_text = ""
+        self._task_spoke = False
+        self._lat: TurnLatency | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        st = self.state
+
+        # Transcripts are consumed here, never forwarded: TTS would read any TextFrame out loud.
+        if isinstance(frame, InterimTranscriptionFrame):
+            st.transcript = frame.text
+            if self._on_interim and st.session == "active":
+                self._on_interim(frame.text)
+            return
+        if isinstance(frame, TranscriptionFrame):
+            self._text.append(frame.text)
+            st.transcript = " ".join(self._text)
+            return
+        if isinstance(frame, _TurnEndFrame):
+            await self._start_turn()
+            return
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
-            self._user_speaking, self._speech_end = True, None
-            await self._cancel_end_timer()
-            await self._barge_in()
-            await self.push_frame(frame, direction)
+            st.user_talking, st.last_activity = True, time.monotonic()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
-            self._user_speaking, self._speech_end = False, time.monotonic()
-            await self._cancel_end_timer()
-            self._end_timer = self.create_task(self._end_after_wait(), "turn_end")
-            await self.push_frame(frame, direction)
-        elif isinstance(frame, InterimTranscriptionFrame):
-            # Consumed, not forwarded: TTS would read any TextFrame out loud.
-            self._interim = frame.text
-            if self._on_interim:
-                self._on_interim(frame.text)
-        elif isinstance(frame, TranscriptionFrame):
-            self._finals.append(frame.text)
-            self._interim = ""
-            if frame.finalized and not self._user_speaking:
-                await self._cancel_end_timer()
-                await self._end_turn()
+            st.user_talking, st.last_activity = False, time.monotonic()
+            self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
+        elif isinstance(frame, UserStartedSpeakingFrame):
+            await self._cancel_turn("barge-in")        # Pipecat already cut the audio
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            await self.queue_frame(_TurnEndFrame())      # runs after the queued transcripts
         elif isinstance(frame, BotStartedSpeakingFrame):
-            self.speaking = True
-            await self.push_frame(frame, direction)
+            st.speaking, st.last_activity = True, time.monotonic()
+            if self._lat:
+                self._lat.mark(LAT_FIRST_AUDIO)
+                logger.info(f"turn {self._lat.turn_id} latency ms: {self._lat.ms()}")
         elif isinstance(frame, BotStoppedSpeakingFrame):
-            self.speaking = False
-            await self.push_frame(frame, direction)
-        else:
-            await self.push_frame(frame, direction)
+            st.speaking, st.last_activity = False, time.monotonic()
 
-    async def speak(self, text: str) -> None:
-        """Queue one sentence for TTS. Also the hook V2's Speech.say builds on."""
-        text = text.strip()
-        if text:
-            self._turn_spoke = True
-            await self.push_frame(TTSSpeakFrame(text))
+        await self.push_frame(frame, direction)
 
-    # -- turn end ---------------------------------------------------------------------------------
+    # -- turns ------------------------------------------------------------------------------------
 
-    async def _end_after_wait(self):
-        deadline = time.monotonic() + self.MAX_WAIT_S
-        await asyncio.sleep(self.FINALIZE_WAIT_S)
-        while not self._finals and self._interim and time.monotonic() < deadline:
-            await asyncio.sleep(0.05)
-        self._end_timer = None
-        await self._end_turn()
-
-    async def _cancel_end_timer(self):
-        if self._end_timer:
-            task, self._end_timer = self._end_timer, None
-            await self.cancel_task(task)
-
-    async def _end_turn(self):
-        text = " ".join(self._finals).strip() or self._interim.strip()
-        self._finals.clear()
-        self._interim = ""
-        if not text:
+    async def _start_turn(self):
+        text = " ".join(t for t in self._text if t).strip()
+        self._text.clear()
+        if not text or self.state.session != "active":     # idle: speech is ignored
             return
         if self._carry:
             text, self._carry = f"{self._carry} {text}", ""
-        t_end = self._speech_end or time.monotonic()
-        logger.info(f"user turn ({(time.monotonic() - t_end) * 1000:.0f} ms after speech end): {text!r}")
-        self._turn_text, self._turn_spoke = text, False
-        self._turn = self.create_task(self._run_turn(text, t_end), "user_turn")
+        self.state.transcript = text
+        self._lat = TurnLatency(turn_id=len(self.state.turns) + 1)
+        self._lat.marks[LAT_SPEECH_END] = self._speech_end or time.monotonic()
+        self.state.turns.append(self._lat)
+        logger.info(f"user turn {self._lat.turn_id}: {text!r} "
+                    f"(+{(time.monotonic() - self._lat.marks[LAT_SPEECH_END]) * 1000:.0f} ms after speech end)")
+        self._task_text, self._task_spoke = text, False
+        self._task = self.create_task(self._run_turn(text), "agent_turn")
 
-    async def _run_turn(self, text: str, t_end: float):
+    async def _run_turn(self, text: str):
         try:
-            await self._on_turn(text, t_end, self.speak)
+            stats = await self.agent.turn(text, self.frames.recent(FRAMES_PER_TURN), self.speak)
+            logger.debug(f"agent turn done: {stats}")
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("turn handler failed")
+            logger.exception("agent turn failed")
 
-    # -- barge-in ---------------------------------------------------------------------------------
+    async def _cancel_turn(self, why: str):
+        if self._task is None or self._task.done():
+            return
+        if not self._task_spoke:              # still thinking: answer both utterances in one turn
+            self._carry = self._task_text
+        logger.info(f"{why}: cancelling agent turn")
+        self.agent.cancel()
+        task, self._task = self._task, None
+        await self.cancel_task(task)
 
-    async def _barge_in(self):
-        busy = self._turn is not None and not self._turn.done()
-        if busy:
-            if not self._turn_spoke:          # still thinking: answer both utterances in one turn
-                self._carry = self._turn_text
-            await self.cancel_task(self._turn)
-        self._turn = None
-        # Always interrupt: clears TTS + output audio even if it is between sentences.
-        await self.broadcast_interruption()
-        if (busy or self.speaking) and self._on_barge_in:
-            self._on_barge_in()
+    # -- SpeechAPI backing ------------------------------------------------------------------------
+
+    async def speak(self, text: str) -> None:
+        text = text.strip()
+        if text:
+            self._task_spoke = True
+            await self.push_frame(TTSSpeakFrame(text))
+
+    async def stop(self) -> None:
+        await self._cancel_turn("stop")
+        await self.broadcast_interruption()   # cuts TTS + queued audio
 
 
-def build_pipeline(on_turn: OnTurn, cfg, *, on_interim=None, on_barge_in=None,
+class Speech:
+    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this."""
+
+    def __init__(self, proc: AgentProcessor, state: State):
+        self._proc, self._state = proc, state
+
+    @property
+    def speaking(self) -> bool:
+        return self._state.speaking
+
+    async def say(self, text: str, priority: Priority = Priority.REPLY) -> None:
+        # v1: no priority queue. PROACTIVE callers check State.user_talking / speaking themselves.
+        await self._proc.speak(text)
+
+    def stop(self) -> None:
+        self._proc.create_task(self._proc.stop(), "speech_stop")
+
+
+def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
+                   on_interim: Callable[[str], None] | None = None,
                    input_device: int | None = None, output_device: int | None = None):
-    """Return (worker, turn_processor). Run the worker with a WorkerRunner."""
+    """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py)."""
     if not cfg.deepgram_api_key:
         raise RuntimeError("DEEPGRAM_API_KEY is not set (laptop/.env)")
     transport = LocalAudioTransport(LocalAudioTransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
         input_device_index=input_device, output_device_index=output_device))
     vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=cfg.vad_stop_secs)))
-    stt = DeepgramSTTService(api_key=cfg.deepgram_api_key)
+    stt = DeepgramSTTService(
+        api_key=cfg.deepgram_api_key,
+        # Boost every way the recipe objects get said, so "cilantro" isn't heard as "silent row".
+        settings=DeepgramSTTService.Settings(keyterm=sorted(state.recipe.names())))
+    turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(stop=[
+        TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
+            params=SmartTurnParams(stop_secs=cfg.turn_fallback_secs)))]))
+    proc = AgentProcessor(agent, frames, state, on_interim=on_interim)
     tts = DeepgramTTSService(api_key=cfg.deepgram_api_key,
                              settings=DeepgramTTSService.Settings(voice=cfg.tts_voice))
-    turns = TurnProcessor(on_turn, on_interim=on_interim, on_barge_in=on_barge_in)
-    pipeline = Pipeline([transport.input(), vad, stt, turns, tts, transport.output()])
+    pipeline = Pipeline([transport.input(), vad, stt, turns, proc, tts, transport.output()])
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(audio_in_sample_rate=16000, audio_out_sample_rate=24000),
@@ -187,33 +227,4 @@ def build_pipeline(on_turn: OnTurn, cfg, *, on_interim=None, on_barge_in=None,
         # TODO(B5): switch to the offline fallback (macOS `say` + typed input) rather than exiting.
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
-    return worker, turns
-
-
-async def echo_turn(text: str, t_speech_end: float, say: Say) -> None:
-    """Stand-in for C's agent: repeats the user, one sentence at a time."""
-    await say(f"You said: {text}")
-
-
-def keyword_target(partial: str, objects: list[str]) -> str | None:
-    """Point-first: if the user names a recipe object, return it so the laser moves at once."""
-    text = partial.lower()
-    for obj in objects:
-        if re.search(rf"\b{re.escape(obj.lower())}s?\b", text):
-            return obj
-    return None
-
-
-async def _main():
-    from .config import CONFIG
-
-    worker, _ = build_pipeline(echo_turn, CONFIG,
-                               on_interim=lambda t: logger.debug(f"interim: {t}"),
-                               on_barge_in=lambda: logger.info("barge-in"))
-    runner = WorkerRunner()
-    await runner.add_workers(worker)
-    await runner.run()
-
-
-if __name__ == "__main__":
-    asyncio.run(_main())
+    return worker, Speech(proc, state)
