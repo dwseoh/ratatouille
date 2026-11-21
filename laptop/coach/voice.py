@@ -199,7 +199,9 @@ class AgentProcessor(FrameProcessor):
 
     async def _run_turn(self, text: str):
         try:
-            stats = await self.agent.turn(text, self.frames.recent(FRAMES_PER_TURN), self.speak)
+            # camera dropped: send no frames at all (the agent then tells the user once) rather than stale ones
+            frames = self.frames.recent(FRAMES_PER_TURN) if self.frames.connected else []
+            stats = await self.agent.turn(text, frames, self.speak)
             logger.debug(f"agent turn done: {stats}")
         except asyncio.CancelledError:
             raise

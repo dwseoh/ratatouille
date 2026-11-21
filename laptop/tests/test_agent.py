@@ -31,23 +31,28 @@ def tool(id_, name, inp):
 
 
 class FakeStream:
-    def __init__(self, events, stop_reason="end_turn", delay=0.0, fail=None):
+    def __init__(self, events, stop_reason="end_turn", delay=0.0, fail=None, delays=None, enter_error=None):
         self.events, self.delay, self.fail, self.stop_reason = events, delay, fail, stop_reason
-        self.consumed = 0
+        self.delays, self.enter_error = delays, enter_error      # delays[i] = pause before event i
+        self.consumed, self.exited = 0, False
 
     async def __aenter__(self):
+        if self.enter_error:
+            raise self.enter_error
         return self
 
     async def __aexit__(self, *exc):
+        self.exited = True
         return False
 
     def __aiter__(self):
         return self._gen()
 
     async def _gen(self):
-        for e in self.events:
-            if self.delay:
-                await asyncio.sleep(self.delay)
+        for i, e in enumerate(self.events):
+            pause = self.delays[i] if self.delays else self.delay
+            if pause:
+                await asyncio.sleep(pause)
             self.consumed += 1
             yield e
         if self.fail:
@@ -395,3 +400,212 @@ def test_fallbacks_only_for_supported_models():
     assert "fallbacks" not in agent._params([])                      # Haiku 5.5 has no server-side fallback
     agent.cfg = Config(model="claude-opus-5-5")
     assert agent._params([])["fallbacks"] == "default"
+
+
+def test_pushback_reason_reaches_the_model_via_the_tool_result():
+    from coach.steps import StepVerdict, Steps
+    s1 = FakeStream([text("Looks mashed to me. "), tool("a", "propose_done", {})], "tool_use")
+    s2 = FakeStream([text("Hold on, not yet then. ")])
+    agent, st, client, aimer = make_agent(s1, s2, step=2)
+    steps = Steps(st, None, lambda step: StepVerdict(False, 0.9, "still big chunks of avocado"))
+    agent.handlers = make_handlers(st, aimer, steps, FakeLink())
+    run(agent.turn("I'm done", [], Sink()))
+    run(agent.turn("really?", [], Sink()))
+    result = client.requests[1]["messages"][-1]["content"][0]
+    assert result["content"] == "push_back: still big chunks of avocado" and st.step == 2
+
+
+# ───────────── B5: fallbacks ─────────────
+
+from coach.agent import REPEAT_FALLBACK  # noqa: E402
+
+
+def test_no_first_token_in_time_speaks_the_canned_line():
+    slow = FakeStream([text("Too late to matter now. ")], delay=0.3)
+    nxt = FakeStream([text("Back to normal now, thanks. ")])
+    agent, st, client, _ = make_agent(slow, nxt)
+    agent.first_token_timeout = 0.05
+    sink = Sink()
+    stats = run(agent.turn("where do I start?", [], sink))
+    assert sink.sentences == [RECIPE.steps[0].fallback]
+    assert stats.error and "timeout" in stats.error and not agent.busy
+    assert slow.exited                                          # the slow request was closed, not left running
+    assert any(e.source == "system" and "agent fallback" in e.text for e in st.events)
+    run(agent.turn("hello?", [], Sink()))                       # and the agent is usable afterwards
+    assert_valid(client.requests[1]["messages"])
+
+
+def test_timeout_only_guards_the_wait_for_the_first_token():
+    # first token arrives at once; the rest is slower than the timeout and must NOT trigger a fallback
+    s1 = FakeStream([text("Starting right here now. "), text("Then a slow second sentence. "), text_done()],
+                    delays=[0.0, 0.15, 0.15])
+    agent, st, *_ = make_agent(s1)
+    agent.first_token_timeout = 0.05
+    sink = Sink()
+    stats = run(agent.turn("go", [], sink))
+    assert stats.error is None and len(sink.sentences) == 2
+
+
+def test_tool_call_first_also_ends_the_wait():
+    s1 = FakeStream([tool("t1", "laser_off", {}), text("All done with that. ")], "tool_use", delays=[0.0, 0.15])
+    agent, *_ = make_agent(s1)
+    agent.first_token_timeout = 0.05
+    assert run(agent.turn("go", [], Sink())).error is None
+
+
+def test_canned_line_once_per_step_then_a_short_apology():
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    agent, st, *_ = make_agent(*[FakeStream([], fail=err) for _ in range(5)])
+    sinks = [Sink() for _ in range(5)]
+    run(agent.turn("a", [], sinks[0]))
+    run(agent.turn("b", [], sinks[1]))
+    st.step = 1                                                 # new step: canned line again
+    run(agent.turn("c", [], sinks[2]))
+    run(agent.turn("d", [], sinks[3]))
+    agent.reset()                                               # new session: canned line again
+    st.step = 0
+    run(agent.turn("e", [], sinks[4]))
+    assert [x.sentences for x in sinks] == [[RECIPE.steps[0].fallback], [REPEAT_FALLBACK],
+                                            [RECIPE.steps[1].fallback], [REPEAT_FALLBACK],
+                                            [RECIPE.steps[0].fallback]]
+
+
+def test_fallback_uses_the_step_after_the_intent_router_advanced_it():
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    agent, st, *_ = make_agent(FakeStream([], fail=err))
+    st.step = 1                      # "done" was handled locally just before the agent turn
+    sink = Sink()
+    run(agent.turn("I'm done", [], sink))
+    assert sink.sentences == [RECIPE.steps[1].fallback]
+
+
+def test_refusal_with_nothing_said_speaks_the_canned_line():
+    agent, st, *_ = make_agent(FakeStream([], stop_reason="refusal"))
+    sink = Sink()
+    stats = run(agent.turn("hi", [], sink))
+    assert sink.sentences == [RECIPE.steps[0].fallback] and stats.error == "refusal"
+
+
+def test_refusal_after_speaking_adds_nothing():
+    agent, st, *_ = make_agent(FakeStream([text("Here is what I can say. ")], stop_reason="refusal"))
+    sink = Sink()
+    stats = run(agent.turn("hi", [], sink))
+    assert sink.sentences == ["Here is what I can say."] and stats.error is None
+
+
+def test_checkin_failure_stays_silent_but_is_recorded():
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    agent, st, *_ = make_agent(FakeStream([], fail=err))
+    sink = Sink()
+    stats = run(agent.turn("[check-in: quiet for 20 s]", [], sink))
+    assert sink.sentences == [] and stats.error
+
+
+def test_missing_credentials_speaks_canned_line_but_real_type_errors_are_not_hidden():
+    no_key = TypeError("Could not resolve authentication method. Expected one of api_key, auth_token")
+    agent, st, *_ = make_agent(FakeStream([], enter_error=no_key))
+    sink = Sink()
+    stats = run(agent.turn("hi", [], sink))
+    assert sink.sentences == [RECIPE.steps[0].fallback] and "credentials" in stats.error
+    agent, *_ = make_agent(FakeStream([], enter_error=TypeError("unsupported operand")))
+    try:
+        run(agent.turn("hi", [], Sink()))
+        raise AssertionError("a genuine bug must not be swallowed")
+    except TypeError:
+        pass
+
+
+def test_prewarm_with_no_credentials_logs_a_clear_error(caplog):
+    agent, *_ = make_agent(create_error=TypeError("Could not resolve authentication method."))
+    with caplog.at_level("ERROR"):
+        run(agent.prewarm())
+    assert "ANTHROPIC_API_KEY" in caplog.text
+
+
+def test_no_camera_is_flagged_once_per_outage():
+    streams = [FakeStream([text("Okay, noted that for you. ")]) for _ in range(4)]
+    agent, st, client, _ = make_agent(*streams)
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+
+    def note(i):
+        return client.requests[i]["messages"][-1]["content"][-1]["text"]
+    run(agent.turn("a", [], Sink()))
+    run(agent.turn("b", [], Sink()))
+    run(agent.turn("c", [frame], Sink()))        # camera back
+    run(agent.turn("d", [], Sink()))             # a new outage: tell again
+    assert "OFFLINE" in note(0) and "tell the user once" in note(0)
+    assert "OFFLINE" in note(1) and "already told" in note(1)
+    assert "OFFLINE" not in note(2)
+    assert "tell the user once" in note(3)
+    assert all(b["type"] != "image" for b in client.requests[0]["messages"][-1]["content"])
+
+
+def test_default_client_has_a_short_timeout():
+    from coach.agent import CLIENT_TIMEOUT_S
+    st = State(RECIPE)
+    agent = Agent(CFG, st, {})
+    assert agent.client.timeout == CLIENT_TIMEOUT_S and agent.first_token_timeout == CFG.first_token_timeout_s
+
+
+def test_fast_mode_is_opt_in_and_reaches_requests_and_prewarm():
+    agent, _, client, _ = make_agent()
+    agent.cfg = Config(model="claude-opus-5-5", fast=False)
+    assert "speed" not in agent._params([])
+    agent.cfg = Config(model="claude-opus-5-5", fast=True)
+    assert agent._params([])["speed"] == "fast"
+    run(agent.prewarm())
+    assert client.creates[0]["speed"] == "fast"
+
+
+# ───────────── tools-only turns get a spoken backstop ─────────────
+
+def test_tools_only_pointing_turn_is_not_silent():
+    s1 = FakeStream([tool("a", "point_at", {"name": "lime"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    sink = Sink()
+    stats = run(agent.turn("show me the lime", [], sink))
+    assert sink.sentences == ["Here's the lime."] and stats.sentences == 1 and stats.tools == ["point_at"]
+
+
+def test_tools_only_not_visible_says_so():
+    s1 = FakeStream([tool("a", "point_at", {"name": "lime"})], "tool_use")
+    agent, st, *_ = make_agent(s1, visible=("avocado",))
+    sink = Sink()
+    run(agent.turn("show me the lime", [], sink))
+    assert sink.sentences == ["I can't see the lime right now."]
+
+
+def test_tools_only_pushback_relays_the_reason_and_other_tools_fall_back_to_the_step():
+    from coach.steps import StepVerdict, Steps
+    s1 = FakeStream([tool("a", "propose_done", {})], "tool_use")
+    agent, st, client, aimer = make_agent(s1, step=2)
+    agent.handlers = make_handlers(st, aimer, Steps(st, None, lambda s: StepVerdict(False, 0.9, "it's still chunky")), FakeLink())
+    sink = Sink()
+    run(agent.turn("I'm done", [], sink))
+    assert sink.sentences == ["Hold on, it's still chunky."]
+
+    s2 = FakeStream([tool("b", "show_text", {"text": "hi"})], "tool_use")
+    agent, st, *_ = make_agent(s2, step=2)
+    sink = Sink()
+    run(agent.turn("where was I?", [], sink))
+    assert sink.sentences == [f"You're on step 3: {RECIPE.steps[2].short}."]
+
+
+def test_backstop_not_used_when_the_model_spoke_or_for_checkins():
+    s1 = FakeStream([text("Here is the lime now. "), tool("a", "point_at", {"name": "lime"})], "tool_use")
+    s2 = FakeStream([tool("b", "laser_off", {})], "tool_use")
+    agent, *_ = make_agent(s1, s2)
+    sink = Sink()
+    run(agent.turn("lime?", [], sink))
+    assert sink.sentences == ["Here is the lime now."]
+    sink2 = Sink()
+    run(agent.turn("[check-in: quiet]", [], sink2))
+    assert sink2.sentences == []
+
+
+def test_fast_mode_is_never_sent_to_models_that_dont_support_it():
+    agent, _, client, _ = make_agent()
+    agent.cfg = Config(model="claude-haiku-5-5", fast=True)      # fast on by default, but Haiku has no fast mode
+    assert "speed" not in agent._params([])
+    run(agent.prewarm())
+    assert "speed" not in client.creates[0]
