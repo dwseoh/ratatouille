@@ -1,7 +1,8 @@
 // ESP32-S3 controller: UDP commands -> pan/tilt servos, laser, TFT. Protocol in docs/protocol.md.
 // Libraries: Adafruit ST7735 and ST7789, Adafruit GFX, ESPmDNS (core). Needs the esp32 board package 3.x.
 // Servos run on the chip's LEDC PWM directly (ESP32Servo fails to build on the newest esp32 package).
-// Board: "ESP32S3 Dev Module". Our board is N8R2: PSRAM "QSPI PSRAM" (or Disabled), Flash Size 8MB.
+// Board: "ESP32S3 Dev Module". Our board is N8R2: PSRAM "QSPI PSRAM" (or Disabled), Flash Mode "QIO 80MHz",
+// Flash Size 8MB. Serial Monitor on the native USB port (cu.usbmodem*) needs USB CDC On Boot: Enabled.
 // ("OPI PSRAM" on an R2 board prints "octal_psram: PSRAM chip is not connected".)
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -107,10 +108,17 @@ void setup() {
 
   WiFi.mode(WIFI_STA); WiFi.setSleep(false);  // no modem sleep = lower UDP latency
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) delay(200);
+  Serial.printf("\ncoach-ctl: joining wifi \"%s\"", WIFI_SSID);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+    if (millis() - t0 > 2000) { Serial.print("."); t0 = millis(); }   // still waiting: wrong name/password or 5 GHz?
+  }
   MDNS.begin("coach-ctl");
   udp.begin(UDP_PORT);
   snprintf(lines[1], sizeof(lines[1]), "%s", WiFi.localIP().toString().c_str()); lineDirty[1] = true;
+  Serial.printf("\ncoach-ctl: wifi OK, IP %s  (coach-ctl.local), UDP port %u\n",
+                WiFi.localIP().toString().c_str(), UDP_PORT);
 }
 
 void loop() {
