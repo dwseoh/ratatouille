@@ -106,6 +106,11 @@ void setup() {
   tft.setTextWrap(false);
   snprintf(lines[1], sizeof(lines[1]), "wifi: connecting"); drawLines();
 
+  // Print the reason every time the hotspot drops us (e.g. AUTH_FAIL / 4WAY_HANDSHAKE_TIMEOUT = wrong password).
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+    uint8_t r = info.wifi_sta_disconnected.reason;
+    Serial.printf("coach-ctl: wifi disconnected, reason %u (%s)\n", r, WiFi.disconnectReasonName((wifi_err_reason_t)r));
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA); WiFi.setSleep(false);  // no modem sleep = lower UDP latency
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.printf("\ncoach-ctl: joining wifi \"%s\"", WIFI_SSID);
