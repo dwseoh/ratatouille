@@ -85,11 +85,13 @@ def _norm(text: str) -> str:
 
 class Watcher:
     def __init__(self, cfg, state: State, frames: FrameSource, speech, steps: StepsAPI,
-                 on_ask: OnAsk | None = None, busy: Callable[[], bool] | None = None, client=None,
+                 on_ask: OnAsk | None = None, busy: Callable[[], bool] | None = None,
+                 ignored: Callable[[], bool] | None = None, client=None,
                  clock: Callable[[], float] = time.monotonic):
         self.cfg, self.state, self.frames, self.speech, self.steps = cfg, state, frames, speech, steps
         self.on_ask, self._clock = on_ask, clock
         self._agent_busy = busy or (lambda: False)         # e.g. lambda: agent.busy
+        self._ignored = ignored or (lambda: False)         # e.g. lambda: agent.camera_ignored ("ignore the camera")
         self._last_busy = float("-inf")                    # last time we saw an agent turn running
         self.client = client or anthropic.AsyncAnthropic(timeout=CALL_TIMEOUT_S, max_retries=0)
         self._task: asyncio.Task | None = None             # the in-flight model call, if any
@@ -105,7 +107,7 @@ class Watcher:
 
     def latest_verdict(self, step: int) -> StepVerdict | None:
         """Steps' `verdict_provider`: the newest cached opinion about `step`, or None (never blocks)."""
-        if self._verdict is None:
+        if self._verdict is None or self._ignored():
             return None
         s, verdict, when = self._verdict
         return verdict if s == step and self._clock() - when <= VERDICT_TTL_S else None
@@ -130,6 +132,10 @@ class Watcher:
     async def tick(self) -> None:
         """One pass: maybe start a model check, then maybe deliver a pending question."""
         if self.state.session != "active":
+            self._events_seen = len(self.state.events)
+            return
+        if self._ignored():                       # the user said to ignore the camera: no looking, no asking
+            self._pending_ask = None
             self._events_seen = len(self.state.events)
             return
         if self._agent_busy():

@@ -81,7 +81,43 @@ Tests: add to `test_agent.py`; try them in `agent_cli`.
 | Check-ins | silence 20 s during a step | speaks once, never over the user |
 | Watcher | run alongside a voice turn | never speaks over the user |
 
-## Phase 7: improvements and demo prep (Sun)
+**Test status (2026-11-21), see `C-qa.md` for details:**
+- Done: unit suite (346 pass), live agent checks, live watcher checks, typed 7-step run, voice mode with the microphone.
+- Not done: phone dashboard, fallback drills, anything on real hardware (camera stream, S3, laser, calibration, latency on the device).
+
+## Phase 7: visuals and recipe import (M, after the first full run works)
+
+Why: Remy only speaks. A lot of the target audience learns visually. Everything here is prepared ahead of time and local,
+so it adds no latency to a turn. Guacamole stays hand-made and hand-checked.
+
+**7a. Visuals in the dashboard (do first; small, part of the dashboard)**
+1. Step card: big current step, a "what it should look like" photo, and the `how` list as a short checklist. Steps without a picture show the hero image or nothing.
+2. Highlight the laser target in the live feed (already what `annotate()` does), so people who can't spot the dot can see it on screen.
+3. Photos: take them yourself during the first rehearsal (matches the real kitchen, no licensing issue). Store in `laptop/recipes/images/<recipe>/step-N.jpg`.
+4. Contract change to agree with Jamie: one additive field on `Step`, `image: str = ""` (default, so nothing else breaks). `Recipe.load()` uses `Step(**s)`, so an unknown JSON field would crash it today.
+5. Optional: `/cook` phone page (mobile layout, step card + image) with a QR code on the dashboard.
+
+**7b. Recipe importer, `tools/import_recipe.py` (command-line, not on the live path)**
+1. Input: a link, a PDF, a text file or a photo of a recipe page.
+2. Get the recipe: for links, read the schema.org JSON-LD recipe data (title, ingredients, steps, image) without an LLM, falling back to page text; PDFs via text extraction or Claude's PDF input; photos via Claude vision.
+3. Convert with Claude (structured output, quality over speed) into our format: `objects` = physical things the camera can see (not "1 tsp kosher salt, divided"), `aliases`, and per step `short` (15 chars or less), `goal`, `how`, `tips`, `point`, `done_when`, `fallback`.
+4. Validate before saving: `Recipe.load()` accepts it, every `point` is in `objects`, sensible object count, at least one step.
+5. Download images to `recipes/images/<recipe>/` (no hot-linking); keep the source link in the JSON; most sites only have a hero image.
+6. Show the result and ask "looks right?" before writing the file.
+7. Tests: a saved HTML page plus a fake Claude client, so they run offline.
+
+Done when: running it on a real recipe link produces a JSON that loads and passes validation, and `RECIPE=recipes/<name>.json python -m coach.agent_cli` can talk about it.
+
+**7c. Stretch within this phase**
+- Dashboard "import" box that runs the importer and says "restart with `RECIPE=...`".
+- A second recipe imported from a link, to show in the pitch that it generalises.
+- Curated YouTube link per step ("Stuck? Watch this") with a QR code. Hand-check each URL; never let the model make one up.
+- `show_image` agent tool for technique pictures (claw grip, rotating the knife around the pit), chosen from a fixed list of about 6 so it can't invent one.
+
+Risks: copyright on scraped photos (local demo only, show the source link); YOLO-World is untested on arbitrary ingredients, so say "imports a recipe", not "works with any counter"; scraping only works on sites with structured recipe data.
+Not doing: swapping recipes while running (the agent prompt, YOLO classes and intent router are all built at startup), runtime image generation, LLM-chosen video search.
+
+## Phase 8: improvements and demo prep (Sun)
 
 - Tune the system prompt after the first real-voice run; keep it stable afterwards (it is the cached part).
 - `prewarm()` again before each demo (cache lasts 5 min).
@@ -89,7 +125,7 @@ Tests: add to `test_agent.py`; try them in `agent_cli`.
 - Record a backup video (offline mode is cut, so the video is the safety net).
 - Pick one persona for the pitch and show 2-3 accessibility features on them.
 
-## Phase 8: stretch (only after a full run works)
+## Phase 9: stretch (only after a full run works)
 
 - "Why" mode (explain the reason behind a step).
 - Latency chart over the whole run on the dashboard.

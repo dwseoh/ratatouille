@@ -159,6 +159,8 @@ B calls `cancel()` when the user starts talking over the coach.
 - If no first token arrives within **3 s**, give up on that request: cancel it and speak the current step's
   `fallback` line (`self.state.current_step.fallback`). `asyncio.timeout(3.0)` around the wait for the first
   event, then `.reschedule(None)` once text arrives, works on Python 3.11+.
+- **Retry first:** on that timeout the agent retries ONCE on `BACKUP_MODEL` (Haiku 5.5, own `BACKUP_TIMEOUT_S`, default 3 s) with
+  the same history; only if that is also silent does it speak the canned line. Both models' caches are warmed at startup.
 - Same for API errors (connection error, rate limit, 5xx, 529 overloaded) and `stop_reason == "refusal"`.
 - Only speak the fallback once per step. After that, say "Sorry, give me a second." instead of repeating it.
 - Put the error in `TurnStats.error` and `State.log("system", ...)`, so the dashboard shows it.

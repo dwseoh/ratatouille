@@ -7,6 +7,7 @@ The fake coach "talks", the step advances every 8 s, so you can see every panel 
 """
 import argparse
 import asyncio
+import logging
 import time
 from pathlib import Path
 
@@ -55,6 +56,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cam", default=None)
     args = ap.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")     # shows the dashboard URL(s)
     recipe = Recipe.load(Path(__file__).resolve().parent.parent / cfg.recipe_path)
     st = State(recipe, dets=fake_dets(tuple(recipe.objects[:5])))
     agent = FakeAgent()

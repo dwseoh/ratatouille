@@ -297,6 +297,7 @@ def test_full_seven_step_run_with_pushback_and_a_vision_ask():
             clock["t"] += 10.0                         # every call is a separate utterance (> the 3 s guard)
             return clock["t"]
         app.steps._clock = tick
+        app.steps.pushback = True                       # the optional camera veto (PUSHBACK_DONE=1)
         app.steps.verdict_provider = lambda step: StepVerdict(False, 0.9, "still big chunks") if step == 2 else None
         n = len(app.state.recipe.steps)
         log = []

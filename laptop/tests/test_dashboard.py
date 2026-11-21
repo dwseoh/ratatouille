@@ -42,13 +42,13 @@ def test_snapshot_has_everything_the_page_needs():
     assert "avocado" in snap["visible"] and len(snap["events"]) == dashboard.EVENTS_SHOWN
     assert snap["events"][-1]["text"] == "event 24"
     assert snap["latency"] == {"first_token": 640, "first_audio": 910, "point_called": 180}
-    assert snap["links"] == {"camera": True, "s3": True, "vbat_mv": 5120}
-    assert snap["captions"] == ["Press down with the fork.", "Leave it a bit chunky."]
+    assert snap["links"] == {"camera": True, "camera_ignored": False, "s3": True, "vbat_mv": 5120}
+    assert snap["caption"] == "Leave it a bit chunky."          # typing mode: just the latest sentence, one at a time
 
 
 def test_snapshot_copes_with_missing_parts():
     snap = dashboard.snapshot(State(RECIPE))                # no frames, link, agent, turns
-    assert snap["latency"] == {} and snap["captions"] == [] and snap["links"]["camera"] is False
+    assert snap["latency"] == {} and snap["caption"] == "" and snap["links"]["camera"] is False
     assert snap["step"]["n"] == 1 and snap["session"] == "idle"
 
 
@@ -114,3 +114,84 @@ def test_serve_starts_answers_and_stops_cleanly_when_cancelled():
         return body
 
     assert b'"step"' in asyncio.run(go())
+
+
+def test_lan_ip_is_an_address_or_none():
+    ip = dashboard.lan_ip()
+    assert ip is None or (ip.count(".") == 3 and all(p.isdigit() and 0 <= int(p) <= 255 for p in ip.split(".")))
+    assert ip is None or not ip.startswith("127.")
+
+
+def test_caption_follows_the_voice_timeline_when_there_is_one():
+    from coach.captions import CaptionTimeline
+    clock = {"t": 0.0}
+    cap = CaptionTimeline(lambda: clock["t"])
+    for text, secs in (("First sentence.", 2.0), ("Second sentence.", 2.0)):
+        cap.queue(text)
+    for secs in (2.0, 2.0):
+        cap.audio_started(); cap.audio_chunk(secs); cap.audio_stopped()
+    cap.playback_started()
+    st = fake_state()
+    assert dashboard.snapshot(st, None, None, Agent(), cap)["caption"] == "First sentence."
+    clock["t"] = 2.5
+    assert dashboard.snapshot(st, None, None, Agent(), cap)["caption"] == "Second sentence."   # not the agent's latest sentence
+
+
+def test_page_shows_one_caption_and_keeps_what_you_said_above_it():
+    page = dashboard.PAGE
+    assert page.index("<h2>You said</h2>") < page.index("<h2>Remy says</h2>")     # what you said never scrolls out of view
+    assert "s.caption" in page and "s.captions" not in page                  # a single caption, not a list
+    assert "position:sticky" in page and "#transcript" in page and "max-height:7.5em" in page
+
+
+def test_snapshot_says_when_the_camera_is_ignored():
+    class A(Agent):
+        camera_ignored = True
+    assert dashboard.snapshot(fake_state(), FakeFrames(), Link(), A())["links"]["camera_ignored"] is True
+    assert dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent())["links"]["camera_ignored"] is False
+
+
+# ───────────── light mode + dyslexia font ─────────────
+
+import re  # noqa: E402
+
+
+def _vars(block: str) -> dict[str, str]:
+    return dict(re.findall(r"--([a-z]+):\s*(#[0-9a-fA-F]{6})", block))
+
+
+def _lum(hex_):
+    r, g, b = (int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def _contrast(a, b):
+    la, lb = sorted((_lum(a), _lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def test_page_has_a_light_mode_and_a_dyslexia_font_option_that_are_remembered():
+    page = dashboard.PAGE
+    for needle in ('id="optTheme"', 'id="optFont"', 'data-theme="light"', 'data-font="dyslexic"', '"OpenDyslexic"',
+                   "opendyslexic-latin-400-normal.woff2", "opendyslexic-latin-700-normal.woff2", "localStorage",
+                   '"remy-" + k', "theme=light&font=dyslexic", "Comic Sans MS"):
+        assert needle in page, needle
+    assert "font:16px/1.4 var(--font)" in page and "button { font:inherit; }" in page          # ALL text, buttons included
+    assert page.index("applyOption(") < page.index("<body>")                                   # applied before first paint
+
+
+def test_both_themes_are_readable_wcag_aa():
+    page = dashboard.PAGE
+    dark = _vars(re.search(r":root \{([^}]*)\}", page).group(1))
+    light = {**dark, **_vars(re.search(r':root\[data-theme="light"\] \{([^}]*)\}', page).group(1))}
+    for name, v in (("dark", dark), ("light", light)):
+        for fg in ("text", "dim", "accent", "ok", "bad", "vision"):
+            ratio = _contrast(v[fg], v["panel"])
+            assert ratio >= 4.5, f"{name}: {fg} on panel only {ratio:.1f}:1"
+        assert _contrast(v["text"], v["bg"]) >= 7, f"{name}: main text on background"
+
+
+def test_the_options_are_keyboard_accessible_buttons():
+    page = dashboard.PAGE
+    assert "<button" in page and ".opt:focus-visible" in page and "aria-pressed" in page

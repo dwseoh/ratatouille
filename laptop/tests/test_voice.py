@@ -20,7 +20,7 @@ from pipecat.tests.utils import SleepFrame, run_test
 from coach.contracts import (LAT_FIRST_AUDIO, LAT_SPEECH_END, FakeAgent, FakeAimer, FakeFrames, FakeSteps, Recipe,
                              SpeechAPI, State)
 from coach.session import START_TEXT, Session
-from coach.voice import AgentProcessor, Speech
+from coach.voice import AgentProcessor, CaptionTap, Speech
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 
@@ -111,6 +111,36 @@ def test_wake_phrase_chimes_then_one_greeting_turn():
     assert state.transcript == "hey Remy, let's make guac"
 
 
+def test_interrupted_greeting_is_merged_but_its_internal_prompt_never_reaches_the_transcript_or_intents():
+    """Say "hey Remy", then keep talking before the coach answers: the greeting instruction is still sent to the
+    agent (so it greets), but `state.transcript` and the intent router only ever see what the user said."""
+    class SpyActions:
+        def __init__(self):
+            self.finals = []
+
+        async def on_final(self, text):
+            self.finals.append(text)
+            return False
+
+        async def on_interim(self, text):
+            pass
+
+        def new_utterance(self):
+            pass
+
+        def take_point_time(self):
+            return None
+    agent = SpyAgent(delay=1.0)
+    proc, _, state = setup(agent, session="idle")
+    proc.actions = SpyActions()
+    Session(state, Speech(proc, state), agent, FakeAimer(state), FakeSteps(state))
+    run(proc, user_says("hey Remy") + [SleepFrame(sleep=0.1)] + user_says("let's start") + [SleepFrame(sleep=0.1)])
+    assert agent.cancels == 1 and len(agent.texts) == 2
+    assert START_TEXT in agent.texts[1] and "let's start" in agent.texts[1]       # the agent still greets, once
+    assert "[session start" not in state.transcript and "[session start" not in " ".join(proc.actions.finals)
+    assert state.transcript == "hey Remy let's start"
+
+
 def test_barge_in_while_thinking_cancels_and_merges():
     proc, agent, _ = setup(SpyAgent(delay=1.0))
     run(proc, user_says("where's the") + [SleepFrame(sleep=0.1)] + user_says("lime") + [SleepFrame(sleep=0.1)])
@@ -180,3 +210,37 @@ def test_speech_say_and_stop():
     assert "check-in test" in spoken(down)
     assert any(isinstance(f, InterruptionFrame) for f in down)
     assert agent.cancels == 1                      # stop() cancelled the running turn
+
+
+def test_caption_tap_measures_audio_per_sentence_and_passes_frames_through():
+    from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
+
+    from coach.captions import CaptionTimeline
+    clock = {"t": 0.0}
+    cap = CaptionTimeline(lambda: clock["t"])
+    cap.queue("One."); cap.queue("Two.")
+    tap = CaptionTap(cap)
+    second = 24000 * 2                                               # 1 s of 24 kHz mono 16-bit audio
+    frames = [TTSStartedFrame(), TTSAudioRawFrame(b"\0" * second, 24000, 1), TTSStoppedFrame(),
+              TTSStartedFrame(), TTSAudioRawFrame(b"\0" * (second * 2), 24000, 1), TTSStoppedFrame()]
+    down, _ = asyncio.run(run_test(tap, frames_to_send=frames))
+    assert [type(f).__name__ for f in down][-6:] == [type(f).__name__ for f in frames]       # untouched
+    cap.playback_started()
+    assert cap.current() == "One."
+    clock["t"] = 1.2
+    assert cap.current() == "Two."                                   # sentence 1 was exactly 1.0 s of audio
+    clock["t"] = 5
+    assert cap.current() == "Two."
+
+
+def test_speaking_queues_the_caption_and_stopping_clears_it():
+    from coach.captions import CaptionTimeline
+    proc, agent, state = setup()
+    proc.captions = CaptionTimeline()
+    run(proc, user_says("hello") + [SleepFrame(sleep=0.5)])
+    assert proc.captions.current() == "You said: hello."              # both sentences were queued; the first is shown
+    assert [i.text for i in proc.captions._items] == ["You said: hello.", "I can see 3 frames."]
+    proc.captions.playback_started()
+    assert proc.captions.speaking
+    proc.captions.reset()
+    assert not proc.captions.speaking and proc.captions.current() == "You said: hello."

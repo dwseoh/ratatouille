@@ -314,7 +314,7 @@ def test_verdict_drives_a_pushback_in_steps():
     async def go():
         st = State(RECIPE)
         w, st, clk, sp, client, _ = make(answer(done=False, conf=0.9, note="whole avocados"))
-        steps = Steps(st, verdict_provider=w.latest_verdict, clock=clk)
+        steps = Steps(st, verdict_provider=w.latest_verdict, clock=clk, pushback=True)
         w.steps = steps
         await run_check(w)
         assert steps.propose_done("user") == "push_back" and steps.reason == "whole avocados"
@@ -427,4 +427,32 @@ def test_the_model_check_itself_never_speaks():
         st.speaking = False
         await run_check(w)
         assert sp.said == []
+    run(go())
+
+
+# ───────────── "ignore the camera": the watcher goes quiet too ─────────────
+
+def test_ignored_camera_means_no_looking_no_verdicts_no_questions():
+    async def go():
+        flag = {"ignored": False}
+        asked = []
+
+        async def on_ask(t):
+            asked.append(t)
+        w, st, clk, sp, client, _ = make(answer(done=False, conf=0.9, note="x"), on_ask=on_ask)
+        w._ignored = lambda: flag["ignored"]
+        await run_check(w)
+        assert len(client.requests) == 1 and w.latest_verdict(0) is not None
+        flag["ignored"] = True
+        assert w.latest_verdict(0) is None                         # B2 must not push back on a covered camera's say-so
+        w._pending_ask = (st.step, "[check-in: ready?]")
+        clk.t += 100
+        st.dets = [Det("lime", 0.9, (0, 0, 10, 10))]
+        st.last_activity = time.monotonic() - 60
+        await run_check(w)
+        assert len(client.requests) == 1 and asked == [] and w._pending_ask is None
+        flag["ignored"] = False
+        clk.t += 100
+        await run_check(w)
+        assert len(client.requests) == 2                           # looks again once the user wants the camera back
     run(go())

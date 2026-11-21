@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from .aim import Aimer, Calibration
+from .captions import CaptionTimeline
 from .config import CONFIG as cfg
 from .telemetry import LatencyLog
 from .contracts import (
@@ -66,7 +67,7 @@ def make_steps(state: State, link=None):
     """C's step machine (it shows the step on TFT line 2 itself), else FakeSteps (always advances)."""
     try:
         from .steps import Steps
-        return Steps(state, link)
+        return Steps(state, link, pushback=cfg.pushback_done)
     except (ImportError, TypeError) as e:
         log.info("using FakeSteps (%s)", e.__class__.__name__)
         return FakeSteps(state)
@@ -132,6 +133,11 @@ async def type_loop(app: "App", lines=None) -> None:
     router = IntentRouter(app.state.recipe, use_embeddings=not lines)   # tests (lines=...) skip the model
     it = iter(lines) if lines is not None else None
     app.state.session = "active"
+    if it is None:
+        await asyncio.sleep(1.5)      # let the startup log lines finish, so the prompt below is the LAST thing shown
+        print("\n" + "=" * 64 + "\n  TYPING MODE: click this terminal, type a line, press Enter.\n"
+              "  Log lines may appear in between: ignore them and keep typing.\n"
+              "  Empty line (just Enter) or Ctrl-D quits.\n" + "=" * 64, flush=True)
     while True:
         if it is not None:
             text = next(it, "")
@@ -180,6 +186,7 @@ class App:
         self.checkins = None
         self.detector = None          # vision.DetectorThread when YOLO is on
         self.latency_log = LatencyLog(state, meta={"model": cfg.model, "fast": cfg.fast})   # logs/latency.jsonl
+        self.captions = CaptionTimeline()       # voice mode: the dashboard caption follows the voice, one sentence at a time
         self._tasks: list[asyncio.Task] = []
 
     @classmethod
@@ -213,7 +220,8 @@ class App:
         """C's watcher (loop 3): event log and "step done?" asks. Needs the voice pipeline."""
         from .watcher import Watcher
         w = Watcher(cfg, self.state, self.frames, self.speech, self.steps,
-                    on_ask=self.speech.agent_turn, busy=lambda: self.agent.busy)
+                    on_ask=self.speech.agent_turn, busy=lambda: self.agent.busy,
+                    ignored=lambda: getattr(self.agent, "camera_ignored", False))
         if hasattr(self.steps, "verdict_provider"):
             self.steps.verdict_provider = w.latest_verdict     # lets Steps push back on a premature "done"
         self._spawn(w.run(), "watcher")
@@ -235,7 +243,8 @@ class App:
             return
         try:
             from . import dashboard
-            web = dashboard.build_app(self.state, self.frames, self.link, self.agent)
+            captions = None if self.args.type else self.captions     # typing mode has no TTS timeline: latest sentence
+            web = dashboard.build_app(self.state, self.frames, self.link, self.agent, captions)
         except ImportError as e:
             log.warning("no dashboard (%s): pip install fastapi uvicorn", e)
             return
@@ -287,7 +296,8 @@ class App:
         from .voice import build_pipeline
 
         actions = IntentActions(IntentRouter(self.state.recipe), self.state, self.aimer, self.steps)
-        worker, self.speech = build_pipeline(cfg, self.agent, self.frames, self.state, actions=actions)
+        worker, self.speech = build_pipeline(cfg, self.agent, self.frames, self.state, actions=actions,
+                                             captions=self.captions)
         self.session = Session(self.state, self.speech, self.agent, self.aimer, self.steps, self.link)
         actions.session = self.session
         if not self.args.no_watcher and not self.args.fake_agent:

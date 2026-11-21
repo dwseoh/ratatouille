@@ -5,6 +5,21 @@ Everything here runs from the repo root unless it says `cd laptop`. "Typed" test
 
 **Cost:** a typed session costs a few cents (Opus 5.5 fast mode is ~$0.04 per turn). The full live script is ~$1.
 
+## Test status (updated 2026-11-21)
+
+Tested means Chloe ran it and it worked; the exact numbers were not written down, so re-run if you need them for the pitch.
+
+| Area | Status | Notes |
+|---|---|---|
+| Unit tests | **Tested** | 346 passed on 2026-11-21 (offline, after pulling Hanjing's changes) |
+| Live agent checks (`tools/live_agent_check.py`) | **Tested** | real key, about $1 |
+| Live watcher checks (`tools/live_watcher_check.py`) | **Tested** | real key |
+| Typed run through all 7 steps (`python -m coach.main --type`) | **Tested** | |
+| Voice mode with the microphone | **Tested** | check-ins and watcher behaviour inside voice mode were not recorded separately |
+| Phone dashboard (section 4) | **NOT tested** | needs phone on the same WiFi; also check the display options on a phone |
+| Fallback drills (section 6) | **NOT tested** | slow API, backup model, bad key, no key, camera down, refusal |
+| Anything on real hardware | **NOT tested** | real ESP32 camera stream, S3 (servos, laser, TFT), calibration, laser landing on a real object, latency on the real device |
+
 ## 0. Setup (once)
 
 ```bash
@@ -23,7 +38,7 @@ brew install portaudio                                         # needed for the 
 
 | What | Command | You should see |
 |---|---|---|
-| Unit tests | `cd laptop && ../.venv/bin/python -m pytest -q` | `263 passed` (a few more if tests were added) |
+| Unit tests | `cd laptop && ../.venv/bin/python -m pytest -q` | `346 passed` on 2026-11-21 (a few more if tests were added) |
 | Live agent checks | `.venv/bin/python tools/live_agent_check.py` | `28/28 checks passed` (costs ~$1) |
 | Live watcher checks | `.venv/bin/python tools/live_watcher_check.py` | 4 × PASS |
 
@@ -46,6 +61,9 @@ Type these one at a time (empty line quits). The camera is black in this harness
 | `where's the salt?` | says it can't see the salt, **no** laser move |
 | `say it simpler` | confirms in one sentence; from now on every reply is short, one action per sentence, no numbers |
 | `back to normal` | confirms; normal wording again |
+| `my camera is covered, just ignore the camera` | one short acknowledgement, then it **never mentions the camera again** (check 3-4 more replies) |
+| `ok you can use the camera again` | it uses the camera again |
+| `I'm done` (when the avocado is clearly not cut) | it **moves on**, no argument: your word wins |
 
 Under every reply you get `ttft` (time to first word) and the cache line. **Pass:** `ttft` about 0.5-1.5 s, and from
 the second turn `cache: read` is a big number (about 3000), not 0.
@@ -55,6 +73,11 @@ the second turn `cache: read` is a big number (about 3000), not 0.
 ```bash
 cd laptop && ../.venv/bin/python -m coach.main --type --no-s3 --no-yolo --cam black
 ```
+
+Wait about 3 seconds. A boxed **TYPING MODE** banner appears, followed by a `you>` prompt. **That `you>` line is where you
+type**: click the terminal, type, press Enter. (Log lines or `[TFT ...]` lines may print after it and push it up
+the screen: ignore them, the app is still waiting for you, just keep typing.) It must be run in a normal
+interactive terminal (Terminal.app, iTerm, or the app's Terminal panel), not piped or run in the background.
 
 Open **http://localhost:8000** in a browser (the dashboard). Then type:
 
@@ -73,9 +96,10 @@ Flags: `--no-checkins` (silence the coach), `--no-dashboard`, `--cam 0` (real we
 
 **Pass:** no crashes, step shown on the dashboard matches the terminal, the event log lists each step change.
 
-A push-back ("I still see big chunks") and the vision "ask" ("looks mashed, ready for the next step?") need the watcher,
-which only runs in **voice mode**, so you can't trigger them by typing. The automated test
-`test_full_seven_step_run_with_pushback_and_a_vision_ask` covers them, and section 8 tests them live.
+By default **your "I'm done" always moves on**, whatever the camera shows (`PUSHBACK_DONE=0`). The only camera nudge is
+the vision "ask" ("looks mashed, ready for the next step?"), once per step, and it needs the watcher, which only runs in
+**voice mode**, so you can't trigger it by typing. Set `PUSHBACK_DONE=1` to let the camera push back once on a "done".
+The automated test `test_full_seven_step_run_with_pushback_and_a_vision_ask` covers both, and section 8 tests the ask live.
 
 ## 4. The dashboard on its own (5 min)
 
@@ -88,8 +112,22 @@ live video with boxes (the target box is green, the red circle is the laser dot)
 (last coach sentence), "You said", the speaking dot, event log (newest on top), 4 latency bars, camera / S3 /
 battery pills, "live" in the header.
 
-- **Phone test:** the laptop prints nothing about its IP; use `ipconfig getifaddr en0` and open `http://<ip>:8000`
-  on a phone on the same WiFi/hotspot. The layout stacks into one column.
+- **Display options (top right of the page):** **Light mode** switches dark/light; **Dyslexia font** shows *all* text in
+  OpenDyslexic. Click each: the button gets an orange border when on, and your choice is remembered in that browser
+  (reload to check). To send someone a ready-made view, add it to the address: `http://<address>:8000/?theme=light&font=dyslexic`
+  (a link choice is for that visit only). The font loads from the internet (jsdelivr); with no internet it falls back to
+  Comic Sans, another dyslexia-friendly font. For a fully offline demo, tell me and I'll bundle the font files.
+- **Phone test:**
+  1. Put the phone on the **same WiFi** as the laptop (not mobile data, not a guest network: those often block it).
+  2. Start the dashboard (`python -m tools.try_dashboard`, or the app from section 3). The log prints
+     `dashboard: http://localhost:8000 (phone on the same WiFi: http://192.168.x.x:8000)`. If you don't see it,
+     run `ipconfig getifaddr en0` in another terminal for the laptop's address.
+  3. On the phone, open that `http://<address>:8000` in the browser. macOS may ask "Allow Python to accept
+     incoming network connections": click **Allow** (or the phone can't connect).
+  4. You should see the same page, in **one column** (video on top, then step, captions, log). Captions must be easy to read.
+     No video but the numbers update? The phone is connecting; wait a few seconds for the stream.
+  If it doesn't load: check the phone and laptop are on the same network name, try Safari/Chrome, and that
+  nothing else uses port 8000.
 - **Disconnect test:** stop the script (Ctrl-C). The page header turns red "disconnected" within a second.
 
 ## 5. Check-ins (the coach talks on its own) (5 min)
@@ -108,8 +146,9 @@ Each of these should print **one sensible canned line** (the step's instruction)
 
 | Drill | How | Expect |
 |---|---|---|
-| API too slow | `FIRST_TOKEN_TIMEOUT_S=0.01 ../.venv/bin/python -m coach.main --type --no-s3 --no-yolo --no-dashboard --cam black`, type `where do I start?` | the step's canned line ("Cut the avocados in half lengthwise around the pit."). The second failure on the same step says "Sorry, give me a second." |
-| Bad key | same command with `ANTHROPIC_API_KEY=invalid` in front | same canned line |
+| Opus too slow, backup works | `FIRST_TOKEN_TIMEOUT_S=0.01 ../.venv/bin/python -m coach.main --type --no-s3 --no-yolo --no-dashboard --cam black`, type `where do I start?` | a **normal answer** (from Haiku, about 1 s after the timeout), not a canned line. The log says `retrying once on claude-haiku-5-5` and the event log shows `agent: answered by claude-haiku-5-5` |
+| Everything too slow | the same command with `BACKUP_MODEL=` (empty) in front | the step's canned line ("Cut the avocados in half lengthwise around the pit."). A second failure on the same step says "Sorry, give me a second." |
+| Bad key | same command with `ANTHROPIC_API_KEY=invalid` in front | the step's canned line (a bad key fails on the backup too) |
 | No key at all | comment out the `ANTHROPIC_API_KEY` line in `laptop/.env`, run the app, then put it back | a red "No Anthropic credentials" line at start, then canned lines |
 | Camera down | `... -m coach.main --type --no-s3 --no-yolo --no-dashboard --cam http://127.0.0.1:9/x` | terminal says `camera DOWN`; the coach says once that its camera is offline and carries on from the recipe |
 | Refusal | covered by `live_agent_check.py` scenario 13 | canned line |
@@ -144,6 +183,8 @@ cd laptop && ../.venv/bin/python -m coach.main --no-s3 --no-yolo --cam 0
 | "I'm done" | step advances, the coach introduces the next step |
 | interrupt the coach mid-sentence | it stops talking immediately and answers what you just said |
 | stay silent 20 s | one short comment, never over you |
+| watch the **dashboard captions** while it talks | **one sentence at a time**; the next only appears when the voice has finished the previous one; if you interrupt, the unspoken ones vanish |
+| cover the camera, say "ignore the camera" | it stops mentioning the camera; the dashboard pill says "camera ignored"; no "ready for the next step?" from the watcher |
 | "start over" | chime, back to idle |
 | halve an avocado in view of the camera | within ~5 s the event log shows "avocado halved"; later the coach asks "ready for the next step?" and you say "yes" and it advances |
 
@@ -155,7 +196,7 @@ After the first real-voice run, tune the system prompt (`SYSTEM` in `laptop/coac
 
 ## 9. Before every demo
 
-1. Check `.env`: `COACH_EFFORT=low`, `CLAUDE_MODEL=claude-opus-5-5`, `CLAUDE_FAST=1`, `FIRST_TOKEN_TIMEOUT_S=5`.
+1. Check `.env`: `COACH_EFFORT=low`, `CLAUDE_MODEL=claude-opus-5-5`, `CLAUDE_FAST=1`, `FIRST_TOKEN_TIMEOUT_S=5`, `BACKUP_MODEL=claude-haiku-5-5` (retries there once if Opus is slow; both models are warmed at startup).
 2. Start the app 1-2 minutes early: it warms the cache (`prewarm ok: ... cache_read=...` in the log). The cache
    lasts 5 minutes, so re-warm by restarting if the coach sat idle longer.
 3. Open the dashboard on the judges' screen; check camera ✓ and S3 ✓.

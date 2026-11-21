@@ -31,8 +31,14 @@ class Config:
     # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
     # usually under 1.5 s but has an occasional slow turn; Haiku is steadier, so 3 is enough there.
     first_token_timeout_s: float = float(_env("FIRST_TOKEN_TIMEOUT_S", "5.0"))
+    # If the main model gives no first token in time, retry ONCE on this faster model before falling back to the
+    # canned step line. Empty = no retry. Cache for it is warmed at startup too.
+    backup_model: str = _env("BACKUP_MODEL", "claude-haiku-5-5")
+    backup_timeout_s: float = float(_env("BACKUP_TIMEOUT_S", "3.0"))      # first-token deadline for that retry
     # How often the coach speaks unprompted: off | gentle (45 s of silence) | normal (20 s). Users can say "talk less".
     checkins: str = _env("CHECKINS", "normal")
+    # Trust the user: "I'm done" always moves on. 1 = let the camera push back once when it clearly disagrees.
+    pushback_done: bool = _env("PUSHBACK_DONE", "0").lower() in ("1", "true", "yes")
     # Accessibility: start in plain-language mode (short sentences, one action each, no idioms or numbers).
     # Users can also say "say it simpler" / "too fast" during the session.
     plain_language: bool = _env("PLAIN_LANGUAGE", "0").lower() in ("1", "true", "yes")

@@ -6,9 +6,10 @@ Latency notes (see docs/architecture.md):
 - tools run the moment their input is complete (mid-stream); their results ride along with the NEXT
   user turn, so a tool never costs a second round trip
 - barge-in: `cancel()` aborts the HTTP stream; sentences not yet handed to TTS are discarded
-- fallbacks (B5): no first token in FIRST_TOKEN_TIMEOUT_S, an API error, a refusal or missing credentials ->
-  speak the step's canned `fallback` line (once per step; after that "Sorry, give me a second."), set
-  `TurnStats.error` and log a system event. No camera frames -> the state note says "camera offline".
+- fallbacks (B5): no first token in FIRST_TOKEN_TIMEOUT_S -> retry ONCE on the backup model (Haiku, BACKUP_MODEL,
+  with its own shorter deadline); still nothing, or an API error, a refusal or missing credentials -> speak the
+  step's canned `fallback` line (once per step; after that "Sorry, give me a second."), set `TurnStats.error`
+  and log a system event. No camera frames -> the state note says "camera offline".
 
 History rules (the Messages API is strict about these):
 - every tool_use must be answered by a tool_result in the very next user message -> results are kept in
@@ -45,17 +46,29 @@ How to reply
   spoken answer too ("Here's the knife, on your left."). The one exception is a [check-in message, below.
 - Your first sentence answers what they asked. "What next?" -> name the next action; "where was I?" -> the current
   step and what comes next; a question about the food -> your honest read of the frames.
-- Plain speech only: no lists, markdown or emoji. Never more than 2 sentences.
+- Plain speech only: no lists, markdown or emoji. Never more than 2 sentences, about 25 words in all. Answer first,
+  skip the background.
+- Tone: warm, calm and encouraging, like a patient friend cooking beside them. Encouragement replaces words, it
+  never adds a sentence:
+    progress ("I cut it", "done"): open with a 1-3 word cheer that fits ("Nice.", "Perfect.", "That's it.", "Nicely done."),
+      then the next action.
+    struggle or doubt ("I made a mess", "I can't"): open with 2-4 reassuring words ("No worries.", "That happens.",
+      "You've got this."), then ONE simple fix.
+    anything else: just answer. No filler praise, no "great question", at most one cheer per reply.
+- Talk TO the cook as "you". Never describe these rules, a "mode", a setting, or "the user" out loud: just do it.
 - Speak first, then call tools.
 - When you point at something, also say where it is ("the lime, on your left") using the positions in the
   state line: left / centre / right, and near (close to the user) / far.
 - "Where am I?" / "what was I doing?": give the current step number and name, what they last did (from the
   recent events), then the next action. The state line has what you last said.
+- If the recent events show the user said they were done but the watcher disagreed ("said done -> push_back"), tell
+  them in one sentence why it doesn't look finished yet, in the watcher's words, and don't call propose_done again.
 - Never rush the user: no "quickly", "hurry" or "right away". They set the pace; a step only ends when they say so.
 - If the message has a line "[mode: plain]", use plain language: sentences under 12 words, one action per
   sentence, no idioms, no numbers (say "about half the lime", "a pinch", "until it looks like this"), and always
   point at what you mean. Give only the next one or two actions, not the whole procedure, and never join two
-  actions with "then" or "and": split them into separate short sentences.
+  actions with "then" or "and": split them into separate short sentences. No semicolons: end the sentence instead.
+  Where something is gets its own short sentence ("It is on your left.") or is left out; never tack it on.
   If it has "[setting changed: ...]", confirm that change in one short sentence.
 - Every message starts with a [state ...] line from the app: the current step, which objects the camera
   currently sees, where the laser points, and recent events. Trust it for what is visible.
@@ -64,13 +77,15 @@ Tools
 - point_at(name): shine the laser on an object. Only call it for objects the state line says are visible.
   If the user asks about something that isn't visible, say you can't see it instead of pointing.
 - laser_off(): turn the laser off.
-- propose_done(): call it only when the frames and the user's words show the current step is really
-  finished. The app decides whether to advance. If you just asked whether they're ready to move on and they
-  say yes, call it.
+- propose_done(): call it when the user says they are finished with the step, or says yes after you asked
+  whether they're ready to move on. Trust them. Never decide a step is finished from the camera alone: if the
+  frames clearly show it is done, just ask once "ready for the next step?" and wait for their answer.
 - show_text(text): up to 20 characters on the wearable's display.
 If a tool result says not_visible or error, you may mention it briefly on your next turn.
 If the state line says the camera is offline, you can't see anything: tell the user once, briefly, then carry on
 from the recipe and what they tell you. Never guess what is on the counter.
+If it says the camera is IGNORED, the user asked you not to use it: never mention the camera again, never ask them
+to move or uncover it, and don't comment on what you can or can't see. Go by the recipe and what they tell you.
 
 If a message starts with [check-in, the app is asking whether to speak up unprompted: say one short
 helpful sentence, or reply with just SKIP when there is nothing worth saying."""
@@ -247,6 +262,7 @@ class _Turn:
     step: int
     checkin: bool
     had_pending: bool
+    greeting: bool = False                                  # the session-start turn ("hey Remy")
     stats: TurnStats = field(default_factory=TurnStats)
     spoken: list[str] = field(default_factory=list)       # sentences handed to on_sentence
     tool_uses: list[dict] = field(default_factory=list)   # tool_use blocks (for the assistant message)
@@ -269,12 +285,38 @@ def positions(dets, width: int, height: int) -> dict[str, str]:
     return out
 
 
+# Sentences that talk ABOUT the instructions instead of to the cook ("In plain mode I give one action...",
+# "The user is holding the avocado..."): the model occasionally thinks out loud. Never speak them.
+_META = re.compile(r"\b(the user|plain mode|plain-language mode|system prompt|my instructions|the app says)\b", re.I)
+
 _PLAIN_ON = ("say it simpler", "say that simpler", "simpler words", "simpler please", "too fast", "slow down",
              "slower please", "explain it simply", "keep it simple", "use simple words")
 _PLAIN_OFF = ("back to normal", "normal mode", "you can use bigger words", "more detail please")
 _TALK_LESS = ("talk less", "be quieter", "fewer comments", "stop commenting", "don't interrupt", "dont interrupt",
               "say less")
 _TALK_MORE = ("talk more", "say more", "more comments", "check in more")
+
+
+_CAM_OFF_WORDS = ("ignore", "forget", "don't use", "dont use", "do not use", "stop using", "stop mentioning",
+                  "stop saying", "stop talking about", "don't mention", "dont mention", "don't worry about",
+                  "dont worry about", "never mind", "turn off", "switch off", "without", "not using", "skip")
+_CAM_ON_WORDS = ("use the camera", "use it again", "look again", "back on", "turn on", "switch on", "uncovered",
+                 "look now", "see now", "start looking", "use camera")
+
+
+def _camera_preference(text: str) -> bool | None:
+    """True = the user wants the camera ignored, False = wants it used again, None = not about the camera."""
+    t = " " + re.sub(r"[^a-z' ]+", " ", text.lower()) + " "
+    t = re.sub(r"\s+", " ", t)
+    if " stop looking " in t or " don't look " in t or " dont look " in t:
+        return True
+    if " you can look now " in t or " you can see now " in t or " look again " in t:
+        return False
+    if "camera" in t and any(w in t for w in _CAM_OFF_WORDS):
+        return True
+    if "camera" in t and any(w in t for w in _CAM_ON_WORDS):
+        return False
+    return None
 
 
 def _has(text: str, phrases) -> bool:
@@ -318,6 +360,7 @@ class Agent:
         self._camera_told = False                  # told the user the camera is offline (once per outage)
         self.recent_sentences: deque[str] = deque(maxlen=3)   # what the coach last said (dashboard captions)
         self.plain = bool(getattr(cfg, "plain_language", False))   # plain-language mode (accessibility)
+        self.camera_ignored = False                # "ignore the camera": no images, never mention it, watcher off
         self.checkins = None                       # CheckIns, set by main, so "talk less" can change its level
         self._positions: dict[str, str] = {}       # object -> "left, near" for the frames of the current turn
         self.last_usage = None                     # token usage of the last request (cache_read_input_tokens ...)
@@ -367,10 +410,15 @@ class Agent:
 
     async def prewarm(self) -> None:
         """Write the prompt cache now (max_tokens=0: prefill only, no output billed) so the first real
-        turn hits a warm cache. Never raises: a failed pre-warm just means a cold first turn."""
-        kw = dict(model=self.cfg.model, max_tokens=0, output_config={"effort": self.cfg.effort},
+        turn hits a warm cache. Also warms the backup model, whose cache is separate, so a retry isn't cold.
+        Never raises: a failed pre-warm just means a cold first turn."""
+        models = [self.cfg.model] + ([self._backup_model()] if self._backup_model() else [])
+        await asyncio.gather(*(self._prewarm_model(m) for m in models))
+
+    async def _prewarm_model(self, model: str) -> None:
+        kw = dict(model=model, max_tokens=0, output_config={"effort": self.cfg.effort},
                   system=self.system, tools=TOOLS, messages=[{"role": "user", "content": "warmup"}])
-        if self._fast():
+        if self._fast(model):
             kw["speed"] = "fast"                    # a different speed is a different cache: warm the one we use
         try:
             try:
@@ -380,14 +428,14 @@ class Agent:
                 kw["tools"] = [{k: v for k, v in t.items() if k != "eager_input_streaming"} for t in TOOLS]
                 resp = await asyncio.wait_for(self.client.messages.create(**kw), timeout=15)
             u = resp.usage
-            log.info("prewarm ok: cache_creation=%s cache_read=%s",
+            log.info("prewarm ok (%s): cache_creation=%s cache_read=%s", model,
                      getattr(u, "cache_creation_input_tokens", None), getattr(u, "cache_read_input_tokens", None))
         except Exception as e:
             if _missing_credentials(e):
                 log.error("No Anthropic credentials (ANTHROPIC_API_KEY in laptop/.env): "
                           "the coach will only speak the canned step lines.")
             else:
-                log.warning("prewarm failed (first turn will be cold): %s: %s", type(e).__name__, e)
+                log.warning("prewarm of %s failed (first turn will be cold): %s: %s", model, type(e).__name__, e)
 
     # ----- turn plumbing -----
 
@@ -417,6 +465,13 @@ class Agent:
         elif _has(text, _PLAIN_OFF) and self.plain:
             self.plain = False
             changes.append("plain language is now OFF")
+        cam = _camera_preference(text)
+        if cam is True and not self.camera_ignored:
+            self.camera_ignored = True
+            changes.append("the user asked you to IGNORE the camera: never mention it again, don't ask them to move it")
+        elif cam is False and self.camera_ignored:
+            self.camera_ignored = False
+            changes.append("the camera is back in use: you can look at the frames again")
         ci = self.checkins
         if ci is not None:
             order = ["off", "gentle", "normal"]
@@ -433,11 +488,17 @@ class Agent:
         if self._exchanges and step < self._exchanges[-1].step:     # session restarted
             self._exchanges.clear()
             self._pending, self._notices = [], []
+            self.camera_ignored = False                              # a new session starts with the camera in use
         checkin = user_text.startswith("[check-in")
         body = user_text if checkin else f"User: {user_text}"
         changes = [] if checkin else self._apply_preferences(user_text)
+        if self.camera_ignored:
+            frames = []                     # the user said to ignore the camera: no images at all
         note = self._note(frames)
-        if frames:
+        if self.camera_ignored:
+            note = re.sub(r"visible: [^|]*", "visible: unknown ", note, count=1)
+            note += " | camera: IGNORED at the user's request (never mention it; go by the recipe and what they say)"
+        elif frames:
             self._camera_told = False
         else:                               # no camera: say so (once per outage) and send no images
             note += " | camera: OFFLINE, no images" + (" (user already told)" if self._camera_told else " (tell the user once)")
@@ -447,7 +508,7 @@ class Agent:
         content += [jpeg_block(f, self.cfg.frame_max_px) for f in frames]
         content.append({"type": "text", "text": f"[{note}]\n{extra}{body}"})
         return _Turn(user={"role": "user", "content": content}, step=step, checkin=checkin,
-                     had_pending=bool(self._pending))
+                     had_pending=bool(self._pending), greeting=user_text.startswith("[session start"))
 
     def _messages(self, ts: _Turn) -> list[dict]:
         """Trimmed history + this turn's user message."""
@@ -463,24 +524,46 @@ class Agent:
             msgs += [e.user, e.assistant]
         return msgs + [ts.user]
 
-    def _params(self, messages: list[dict]) -> dict:
-        p = dict(model=self.cfg.model, max_tokens=MAX_TOKENS, output_config={"effort": self.cfg.effort},
+    def _params(self, messages: list[dict], model: str | None = None) -> dict:
+        model = model or self.cfg.model
+        p = dict(model=model, max_tokens=MAX_TOKENS, output_config={"effort": self.cfg.effort},
                  system=self.system, tools=TOOLS, messages=messages)
-        if self.cfg.model in FALLBACK_MODELS:
+        if model in FALLBACK_MODELS:
             p.update(betas=[FALLBACK_BETA], fallbacks="default")    # re-run on a fallback model on refusal
-        if self._fast():
+        if self._fast(model):
             p["speed"] = "fast"                                     # Opus fast mode (CLAUDE_FAST=1)
         return p
 
-    def _fast(self) -> bool:
-        return bool(getattr(self.cfg, "fast", False)) and self.cfg.model in FAST_MODE_MODELS
+    def _fast(self, model: str | None = None) -> bool:
+        return bool(getattr(self.cfg, "fast", False)) and (model or self.cfg.model) in FAST_MODE_MODELS
+
+    def _backup_model(self) -> str | None:
+        """The faster model to retry on when the main one is too slow (None = retries off)."""
+        backup = (getattr(self.cfg, "backup_model", "") or "").strip()
+        return backup if backup and backup != self.cfg.model else None
 
     async def _stream(self, ts: _Turn, on_sentence: OnSentence, t0: float) -> None:
+        messages = copy.copy(self._messages(ts))        # trimmed once, so a retry sends exactly the same history
+        try:
+            await self._stream_once(ts, on_sentence, t0, messages, self.cfg.model, self.first_token_timeout)
+        except TimeoutError:
+            # Nothing was said and no tool ran (the deadline only guards the wait for the first token), so it is
+            # safe to ask again. One retry, on the faster model, with its own short deadline.
+            backup = self._backup_model()
+            if backup is None:
+                raise
+            log.warning("%s gave no first token in %.1fs: retrying once on %s", self.cfg.model,
+                        self.first_token_timeout, backup)
+            self.state.log("system", f"agent: {self.cfg.model} too slow, retrying on {backup}")
+            await self._stream_once(ts, on_sentence, t0, messages, backup, getattr(self.cfg, "backup_timeout_s", 3.0))
+            self.state.log("system", f"agent: answered by {backup}")
+
+    async def _stream_once(self, ts: _Turn, on_sentence: OnSentence, t0: float, messages: list[dict],
+                           model: str, timeout: float) -> None:
         splitter = SentenceSplitter()
-        messages = copy.copy(self._messages(ts))
-        # No first text / tool call within first_token_timeout -> TimeoutError -> canned fallback line.
-        async with asyncio.timeout(self.first_token_timeout) as deadline:
-            async with self.client.beta.messages.stream(**self._params(messages)) as stream:
+        # No first text / tool call within `timeout` -> TimeoutError (-> backup model, then the canned line).
+        async with asyncio.timeout(timeout) as deadline:
+            async with self.client.beta.messages.stream(**self._params(messages, model)) as stream:
                 async for event in stream:
                     if event.type == "text":
                         if ts.stats.ttft_s is None:
@@ -514,6 +597,9 @@ class Agent:
             return
         if ts.checkin and sentence.strip(".! ").upper() == "SKIP":
             return
+        if _META.search(sentence):
+            log.warning("dropped a sentence that talks about the instructions: %r", sentence)
+            return
         ts.spoken.append(sentence)
         self.recent_sentences.append(sentence)
         ts.stats.sentences += 1
@@ -536,26 +622,52 @@ class Agent:
         except Exception:
             log.exception("could not speak the fallback line")
 
+    def _recent_pushback(self) -> str | None:
+        """Why the watcher disagreed with a "done" the intent router already handled (and nobody has told the user)."""
+        now = time.time()
+        for e in reversed(self.state.events[-6:]):
+            if e.source == "system" and "watcher disagrees: " in e.text and now - e.t < 15:
+                return e.text.split("watcher disagrees: ", 1)[1].strip().rstrip(".")
+        return None
+
     async def _backstop(self, ts: _Turn, on_sentence: OnSentence) -> None:
         """The model answered with tool calls only. The user only hears audio, so that is silence: say a short
-        line built from what the tools did. (The prompt forbids this and Haiku obeys; Opus still does it ~1 in 4.)"""
+        line that fits the situation. (The prompt forbids this and Haiku obeys; Opus still does it ~1 in 4.)
+        Never repeats a line the coach just said: repeating itself is worse than a plain step line."""
         uses = {u["id"]: u for u in ts.tool_uses}
         line = None
+        pushback = self._recent_pushback()
+        step = self.state.current_step
+        if pushback:                                   # "I'm done" was pushed back by the router: say why
+            line = f"Hold on, {pushback}."
+        elif ts.greeting:                              # the "hey Remy" greeting: introduce yourself and step 1
+            line = f"Hi, I'm Remy. {step.fallback}"
         for r in ts.results:
+            if line is not None:
+                break
             use = uses.get(r["tool_use_id"], {})
             result, obj = str(r.get("content", "")), use.get("input", {}).get("name")
             if use.get("name") == "propose_done" and result.startswith("push_back"):
                 reason = result.partition(": ")[2]
                 line = f"Hold on, {reason}." if reason else "Hold on, that doesn't look finished yet."
-                break
-            if use.get("name") == "point_at" and obj:
+            elif use.get("name") == "propose_done" and result == "advance":
+                line = f"Nice work. {self.state.current_step.fallback}"          # state.step already moved on
+            elif use.get("name") == "propose_done" and result == "finished":
+                line = "That's it, you did it! Enjoy your guacamole."
+            elif use.get("name") == "point_at" and obj:
                 where = self._positions.get(obj, "").split(",")[0]       # "left" / "centre" / "right"
                 here = f"Here's the {obj}" + (f", on your {where}." if where in ("left", "right") else
                                               ", in the middle." if where == "centre" else ".")
-                line = here if result == "ok" else (
-                    f"I can't see the {obj} right now." if result == "not_visible" else line)
-        if line is None:                    # nothing to describe: at least say where they are
-            line = f"You're on step {self.state.step + 1}: {self.state.current_step.short}."
+                line = here if result == "ok" else (f"I can't see the {obj} right now." if result == "not_visible" else line)
+        if line is None:                               # nothing to describe: at least say where they are
+            line = f"You're on step {self.state.step + 1}: {step.short}."
+        said = {x.lower() for x in self.recent_sentences}
+        if line.lower() in said:                       # just said that: walk through the step's own instructions
+            options = [step.fallback] + [a[:1].upper() + a[1:] + "." for a in step.how]
+            line = next((o for o in options if o.lower() not in said), None)
+        if line is None:
+            log.info("silent turn (tools only: %s): nothing new to say, staying quiet", ts.stats.tools)
+            return
         log.info("silent turn (tools only: %s): speaking %r", ts.stats.tools, line)
         await self._emit(ts, line, on_sentence)
 
