@@ -182,9 +182,54 @@ async def s_fallback():
           f"{stats.error[:50] if stats.error else None}")
 
 
+async def s_timeout():
+    print("9. first token too slow -> canned line (timeout forced to 0.05 s)")
+    agent, st, _, _ = build()
+    agent.first_token_timeout = 0.05
+    sink = Sink()
+    stats = await agent.turn("Where do I start?", frames("avocado_hold"), sink)
+    check("canned step line spoken, error says timeout", sink.sentences == [RECIPE.steps[0].fallback] and "timeout" in (stats.error or ""),
+          f"{stats.error} | {sink.sentences}")
+    agent.first_token_timeout = 15
+    stats2 = await agent.turn("Where do I start?", frames("avocado_hold"), Sink())
+    check("next turn works normally", stats2.error is None and stats2.sentences >= 1, stats2.error or "")
+
+
+async def s_no_camera():
+    print("10. camera offline: says so once")
+    agent, st, _, _ = build()
+    s1, s2 = Sink(), Sink()
+    await agent.turn("Where do I start?", [], s1)
+    await agent.turn("And then?", [], s2)
+    first, second = " ".join(s1.sentences).lower(), " ".join(s2.sentences).lower()
+    mention = ("camera", "can't see", "cannot see", "don't see", "no view", "not seeing")
+    check("first reply mentions the camera is off", any(w in first for w in mention), first[:140])
+    check("second reply does not repeat it", not any(w in second for w in ("camera",)), second[:140])
+
+
+ASK = ["Where's the avocado?", "Point at the knife", "What next?", "Is this cut right?", "Where's the bowl?",
+       "Show me the lime", "How do I hold the knife?", "Where was I?", "Point at the bowl", "Anything else?",
+       "What should I do now?", "Which one is the onion?"]
+
+
+async def s_always_speaks():
+    print("11. every user turn gets a spoken answer (never tools alone)")
+    agent, st, aimer, _ = build()
+    silent = []
+    for q in ASK:
+        sink = Sink()
+        await agent.turn(q, frames("avocado_halves"), sink)
+        if not sink.sentences:
+            silent.append(q)
+    check(f"no silent turns out of {len(ASK)}", not silent, f"silent: {silent}" if silent else "")
+
+
 async def main():
+    only = sys.argv[1:]            # optional: scenario names, e.g. `always_speaks`
     for scenario in (s_cache, s_point_and_defer, s_not_visible, s_barge_in, s_propose_done,
-                     s_long_conversation, s_checkin, s_fallback):
+                     s_long_conversation, s_checkin, s_fallback, s_timeout, s_no_camera, s_always_speaks):
+        if only and scenario.__name__[2:] not in only:
+            continue
         try:
             await scenario()
         except Exception as e:      # a crash is a failure of that scenario, not of the whole run

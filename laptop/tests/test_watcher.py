@@ -1,6 +1,7 @@
 """Watcher tests: trigger rules, applying the model's answer, safety check. Offline: fake client, frames, speech."""
 import asyncio
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -74,12 +75,13 @@ def answer(events=(), done=False, conf=0.9, note=""):
     return {"events": list(events), "step_done": done, "confidence": conf, "note": note}
 
 
-def make(*answers, step=0, visible=("avocado", "knife"), active=True, steps=None, on_ask=None, frames=None):
+def make(*answers, step=0, visible=("avocado", "knife"), active=True, steps=None, on_ask=None, frames=None, busy=None):
     st = State(RECIPE, dets=[Det(n, 0.9, (0, 0, 10, 10)) for n in visible])
     st.step, st.session = step, "active" if active else "idle"
+    st.last_activity = time.monotonic() - 60                  # nobody has spoken for a minute
     clk, speech, client = Clock(), Speech(), Client(*answers)
     steps = steps or FakeSteps(st)
-    w = Watcher(CFG, st, frames or Frames(), speech, steps, on_ask=on_ask, client=client, clock=clk)
+    w = Watcher(CFG, st, frames or Frames(), speech, steps, on_ask=on_ask, busy=busy, client=client, clock=clk)
     return w, st, clk, speech, client, steps
 
 
@@ -428,4 +430,72 @@ def test_run_loop_survives_errors_and_stops_on_cancel():
         except asyncio.CancelledError:
             pass
         assert len(calls) >= 2
+    run(go())
+
+
+# ───────────── never talks over anyone ─────────────
+
+def _pending_ask_watcher(busy=None):
+    asked = []
+
+    async def on_ask(t):
+        asked.append(t)
+    w, st, clk, sp, client, _ = make(on_ask=on_ask, busy=busy)
+    w._pending_ask = (st.step, "[check-in: ready?]")
+    return w, st, clk, asked
+
+
+def test_question_never_starts_while_an_agent_turn_is_running():
+    """A new agent turn cancels the one in flight, so asking mid-turn would kill the user's answer."""
+    async def go():
+        state = {"busy": True}
+        w, st, clk, asked = _pending_ask_watcher(busy=lambda: state["busy"])
+        for _ in range(5):
+            clk.t += 1
+            await w.tick()
+        assert asked == []                                        # still thinking / speaking its answer
+        state["busy"] = False
+        await w.tick()
+        assert asked == []                                        # agent just finished: TTS may still be starting
+        clk.t += W.BUSY_SETTLE_S + 0.1
+        await w.tick()
+        assert len(asked) == 1
+    run(go())
+
+
+def test_question_waits_for_a_quiet_moment_after_anyone_spoke():
+    async def go():
+        w, st, clk, asked = _pending_ask_watcher()
+        st.last_activity = time.monotonic()                       # the user / coach just stopped talking
+        clk.t += 10
+        await w.tick()
+        assert asked == []
+        st.last_activity = time.monotonic() - W.ASK_SETTLE_S - 0.1
+        await w.tick()
+        assert len(asked) == 1
+    run(go())
+
+
+def test_question_waits_while_coach_speaks_or_user_talks():
+    async def go():
+        w, st, clk, asked = _pending_ask_watcher()
+        clk.t += 10
+        st.speaking = True
+        await w.tick()
+        st.speaking, st.user_talking = False, True
+        await w.tick()
+        assert asked == []
+        st.user_talking = False
+        await w.tick()
+        assert len(asked) == 1
+    run(go())
+
+
+def test_the_model_check_itself_never_speaks():
+    """Only the safety line and the question ever reach the speaker; a normal check adds events only."""
+    async def go():
+        w, st, clk, sp, client, _ = make(answer(["avocado halved"], done=False, conf=0.9, note="x"))
+        st.speaking = False
+        await run_check(w)
+        assert sp.said == []
     run(go())

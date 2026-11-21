@@ -11,6 +11,12 @@ Three jobs
   3. Safety:      local, no LLM: knife box touching/near a hand box for 3 detection updates in a row ->
                   Speech.say("Careful, fingers!", SAFETY), at most once per 10 s.
 
+The watcher speaks in exactly two places, and both are guarded:
+  - the safety line: deliberately NOT gated (a knife near fingers can't wait for a pause);
+  - the "ready for the next step?" question: only when nobody is talking AND no agent turn is running (a new
+    agent turn cancels the one in flight, which would kill the answer to the user's own question) AND things have
+    been quiet for ASK_SETTLE_S, so it never lands right after the user or the coach stops talking.
+
 When the model is called (never while the coach or the user is talking, never while the session is idle,
 never more often than MIN_GAP_S): the visible-object set changed, the user said "done", `request_check()`
 was called, or STEP_INTERVAL_S passed. Calls run in a background task, so safety checks never wait on one.
@@ -43,6 +49,8 @@ FRAMES = 4                  # frames per call (~0.5 s apart)
 FRAME_MAX_PX = 384
 MAX_EVENTS_PER_CALL = 3
 DONE_CONF = 0.8             # confidence needed before the watcher suggests "step done" to the user
+ASK_SETTLE_S = 1.5          # the question waits until nobody has spoken for this long...
+BUSY_SETTLE_S = 1.0         # ...and the agent has been idle for this long (TTS lags a moment behind the agent)
 VERDICT_TTL_S = 15.0        # a cached verdict older than this isn't offered to Steps
 CALL_TIMEOUT_S = 10.0
 LOG_LINES = 15              # recent events shown to the model
@@ -89,9 +97,12 @@ def box_gap(a, b) -> float:
 
 class Watcher:
     def __init__(self, cfg, state: State, frames: FrameSource, speech, steps: StepsAPI,
-                 on_ask: OnAsk | None = None, client=None, clock: Callable[[], float] = time.monotonic):
+                 on_ask: OnAsk | None = None, busy: Callable[[], bool] | None = None, client=None,
+                 clock: Callable[[], float] = time.monotonic):
         self.cfg, self.state, self.frames, self.speech, self.steps = cfg, state, frames, speech, steps
         self.on_ask, self._clock = on_ask, clock
+        self._agent_busy = busy or (lambda: False)         # e.g. lambda: agent.busy
+        self._last_busy = float("-inf")                    # last time we saw an agent turn running
         self.client = client or anthropic.AsyncAnthropic(timeout=CALL_TIMEOUT_S, max_retries=0)
         self._task: asyncio.Task | None = None             # the in-flight model call, if any
         self._last_run: float | None = None
@@ -138,6 +149,8 @@ class Watcher:
             self._events_seen = len(self.state.events)
             return
         await self._safety()
+        if self._agent_busy():
+            self._last_busy = self._clock()
         reason = self._why_check()
         if reason and not self._busy():
             self._last_run = self._clock()
@@ -252,12 +265,20 @@ class Watcher:
         step, text = self._pending_ask
         if self.state.step != step or self.state.session != "active":
             self._pending_ask = None               # stale: the user already moved on / reset
-        elif self._quiet() and self.on_ask is not None:
+        elif self._ok_to_ask() and self.on_ask is not None:
             self._pending_ask = None
             try:
                 await self.on_ask(text)
             except Exception:
                 log.exception("watcher: asking the user failed")
+
+    def _ok_to_ask(self) -> bool:
+        """Nobody talking, no agent turn running, and quiet for a moment (see the module docstring)."""
+        if not self._quiet() or self._agent_busy():
+            return False
+        if time.monotonic() - self.state.last_activity < ASK_SETTLE_S:     # voice stamps this with monotonic()
+            return False
+        return self._clock() - self._last_busy >= BUSY_SETTLE_S
 
     # ----- safety (local, no LLM) -----
 

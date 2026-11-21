@@ -6,6 +6,9 @@ Latency notes (see docs/architecture.md):
 - tools run the moment their input is complete (mid-stream); their results ride along with the NEXT
   user turn, so a tool never costs a second round trip
 - barge-in: `cancel()` aborts the HTTP stream; sentences not yet handed to TTS are discarded
+- fallbacks (B5): no first token in FIRST_TOKEN_TIMEOUT_S, an API error, a refusal or missing credentials ->
+  speak the step's canned `fallback` line (once per step; after that "Sorry, give me a second."), set
+  `TurnStats.error` and log a system event. No camera frames -> the state note says "camera offline".
 
 History rules (the Messages API is strict about these):
 - every tool_use must be answered by a tool_result in the very next user message -> results are kept in
@@ -33,11 +36,16 @@ from .contracts import LAT_FIRST_TOKEN, LAT_POINT, TFT_AGENT, OnSentence, State,
 log = logging.getLogger(__name__)
 
 SYSTEM = """You are a hands-free cooking coach speaking through an earpiece while the user cooks.
-You see what a chest camera sees.
+You see what a chest camera sees. The user's hands are busy and they can't read a screen: they only hear you.
 
 How to reply
-- Your words are spoken aloud: 1-2 short sentences, plain speech, no lists, markdown or emoji.
-- Say your sentence first, then call tools.
+- ALWAYS speak. Every reply to the user starts with 1-2 short spoken sentences, even when you also use a tool.
+  A reply made only of tool calls is silence to the user, and silence is never right. Pointing commands get a
+  spoken answer too ("Here's the knife, on your left."). The one exception is a [check-in message, below.
+- Your first sentence answers what they asked. "What next?" -> name the next action; "where was I?" -> the current
+  step and what comes next; a question about the food -> your honest read of the frames.
+- Plain speech only: no lists, markdown or emoji. Never more than 2 sentences.
+- Speak first, then call tools.
 - Every message starts with a [state ...] line from the app: the current step, which objects the camera
   currently sees, where the laser points, and recent events. Trust it for what is visible.
 
@@ -49,6 +57,8 @@ Tools
   finished. The app decides whether to advance.
 - show_text(text): up to 20 characters on the wearable's display.
 If a tool result says not_visible or error, you may mention it briefly on your next turn.
+If the state line says the camera is offline, you can't see anything: tell the user once, briefly, then carry on
+from the recipe and what they tell you. Never guess what is on the counter.
 
 If a message starts with [check-in, the app is asking whether to speak up unprompted: say one short
 helpful sentence, or reply with just SKIP when there is nothing worth saying."""
@@ -85,8 +95,12 @@ TOOLS = [
 MAX_TOKENS = 4096          # deliberately short spoken replies; thinking tokens count against this
 KEEP_TURNS = 6             # history: current step + at least this many recent turns
 MIN_SENTENCE_WORDS = 4     # "Okay." alone is not worth a TTS call
+FIRST_TOKEN_TIMEOUT_S = 3.0   # no first text/tool call by then -> give up and speak the canned line
+CLIENT_TIMEOUT_S = 15.0       # hard cap per request, so a dead connection can't hang a turn
+REPEAT_FALLBACK = "Sorry, give me a second."   # the 2nd+ failure on the same step
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Models that accept server-side refusal fallbacks (Haiku 5.5 does not).
+FAST_MODE_MODELS = {"claude-opus-5-5", "claude-fable-5-2"}   # `speed="fast"` on any other model is a 400
 FALLBACK_MODELS = {"claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 
@@ -230,6 +244,19 @@ class _Turn:
     stop_reason: str | None = None
 
 
+def _missing_credentials(e: BaseException) -> bool:
+    """The SDK raises a bare TypeError (not an APIError) when no API key / token is configured."""
+    return isinstance(e, TypeError) and "authentication" in str(e).lower()
+
+
+def _describe(e: BaseException) -> str:
+    if isinstance(e, TimeoutError):
+        return "timeout: no first token in time"
+    if _missing_credentials(e):
+        return "no Anthropic credentials (set ANTHROPIC_API_KEY)"
+    return f"{type(e).__name__}: {e}"
+
+
 # ───────────────────────── the agent ─────────────────────────
 
 class Agent:
@@ -239,7 +266,8 @@ class Agent:
         self.cfg, self.state, self.handlers = cfg, state, handlers
         # One client for the app's lifetime (keep-alive). Short timeout + 1 retry: a voice turn that
         # takes 30 s is worse than the canned fallback line.
-        self.client = client or anthropic.AsyncAnthropic(timeout=30.0, max_retries=1)
+        self.client = client or anthropic.AsyncAnthropic(timeout=CLIENT_TIMEOUT_S, max_retries=1)
+        self.first_token_timeout = getattr(cfg, "first_token_timeout_s", FIRST_TOKEN_TIMEOUT_S)
         self.system = build_system(dataclasses.asdict(state.recipe))
         self.busy = False
         self._exchanges: list[_Exchange] = []
@@ -247,6 +275,8 @@ class Agent:
         self._notices: list[str] = []
         self._run: asyncio.Future | None = None
         self._cancelled = False
+        self._fallback_steps: set[int] = set()     # steps whose canned line we've already spoken
+        self._camera_told = False                  # told the user the camera is offline (once per outage)
 
     # ----- public API -----
 
@@ -263,11 +293,15 @@ class Agent:
             task = asyncio.current_task()
             if task is not None and task.cancelling():
                 raise                      # the caller cancelled the whole task: let it unwind
-        except anthropic.APIError as e:
-            ts.stats.error = f"{type(e).__name__}: {e}"
-            log.warning("agent turn failed: %s", ts.stats.error)
-            if not ts.spoken and not ts.checkin:
-                await self._fallback(ts, on_sentence)
+        except (anthropic.APIError, TimeoutError, TypeError) as e:
+            if isinstance(e, TypeError) and not _missing_credentials(e):
+                raise                              # a real bug, not an API problem
+            await self._failed(ts, on_sentence, _describe(e))
+        else:
+            if ts.stop_reason == "refusal" and not ts.spoken:
+                await self._failed(ts, on_sentence, "refusal")
+            elif not ts.spoken and ts.tool_uses and not ts.checkin:
+                await self._backstop(ts, on_sentence)
         finally:
             ts.stats.total_s = time.monotonic() - t0
             self._commit(ts)
@@ -285,12 +319,15 @@ class Agent:
         self.cancel()
         self._exchanges.clear()
         self._pending, self._notices = [], []
+        self._fallback_steps.clear()
 
     async def prewarm(self) -> None:
         """Write the prompt cache now (max_tokens=0: prefill only, no output billed) so the first real
         turn hits a warm cache. Never raises: a failed pre-warm just means a cold first turn."""
         kw = dict(model=self.cfg.model, max_tokens=0, output_config={"effort": self.cfg.effort},
                   system=self.system, tools=TOOLS, messages=[{"role": "user", "content": "warmup"}])
+        if self._fast():
+            kw["speed"] = "fast"                    # a different speed is a different cache: warm the one we use
         try:
             try:
                 resp = await asyncio.wait_for(self.client.messages.create(**kw), timeout=15)
@@ -302,7 +339,11 @@ class Agent:
             log.info("prewarm ok: cache_creation=%s cache_read=%s",
                      getattr(u, "cache_creation_input_tokens", None), getattr(u, "cache_read_input_tokens", None))
         except Exception as e:
-            log.warning("prewarm failed (first turn will be cold): %s: %s", type(e).__name__, e)
+            if _missing_credentials(e):
+                log.error("No Anthropic credentials (ANTHROPIC_API_KEY in laptop/.env): "
+                          "the coach will only speak the canned step lines.")
+            else:
+                log.warning("prewarm failed (first turn will be cold): %s: %s", type(e).__name__, e)
 
     # ----- turn plumbing -----
 
@@ -319,9 +360,15 @@ class Agent:
             self._pending, self._notices = [], []
         checkin = user_text.startswith("[check-in")
         body = user_text if checkin else f"User: {user_text}"
+        note = self._note()
+        if frames:
+            self._camera_told = False
+        else:                               # no camera: say so (once per outage) and send no images
+            note += " | camera: OFFLINE, no images" + (" (user already told)" if self._camera_told else " (tell the user once)")
+            self._camera_told = self._camera_told or not checkin
         content = list(self._pending)
         content += [jpeg_block(f, self.cfg.frame_max_px) for f in frames]
-        content.append({"type": "text", "text": f"[{self._note()}]\n{body}"})
+        content.append({"type": "text", "text": f"[{note}]\n{body}"})
         return _Turn(user={"role": "user", "content": content}, step=step, checkin=checkin,
                      had_pending=bool(self._pending))
 
@@ -344,29 +391,38 @@ class Agent:
                  system=self.system, tools=TOOLS, messages=messages)
         if self.cfg.model in FALLBACK_MODELS:
             p.update(betas=[FALLBACK_BETA], fallbacks="default")    # re-run on a fallback model on refusal
+        if self._fast():
+            p["speed"] = "fast"                                     # Opus fast mode (CLAUDE_FAST=1)
         return p
+
+    def _fast(self) -> bool:
+        return bool(getattr(self.cfg, "fast", False)) and self.cfg.model in FAST_MODE_MODELS
 
     async def _stream(self, ts: _Turn, on_sentence: OnSentence, t0: float) -> None:
         splitter = SentenceSplitter()
         messages = copy.copy(self._messages(ts))
-        async with self.client.beta.messages.stream(**self._params(messages)) as stream:
-            async for event in stream:
-                if event.type == "text":
-                    if ts.stats.ttft_s is None:
-                        ts.stats.ttft_s = time.monotonic() - t0
-                        if self.state.turns and not ts.checkin:
-                            self.state.turns[-1].mark(LAT_FIRST_TOKEN)
-                    for s in splitter.feed(event.text):
-                        await self._emit(ts, s, on_sentence)
-                elif event.type == "content_block_stop":
-                    block = event.content_block
-                    if block.type == "tool_use":
-                        self._run_tool(ts, block.id, block.name, block.input)
-                    elif block.type == "text" and (tail := splitter.flush()):
-                        await self._emit(ts, tail, on_sentence)     # don't hold the last sentence back
-            if tail := splitter.flush():
-                await self._emit(ts, tail, on_sentence)
-            final = await stream.get_final_message()
+        # No first text / tool call within first_token_timeout -> TimeoutError -> canned fallback line.
+        async with asyncio.timeout(self.first_token_timeout) as deadline:
+            async with self.client.beta.messages.stream(**self._params(messages)) as stream:
+                async for event in stream:
+                    if event.type == "text":
+                        if ts.stats.ttft_s is None:
+                            ts.stats.ttft_s = time.monotonic() - t0
+                            deadline.reschedule(None)
+                            if self.state.turns and not ts.checkin:
+                                self.state.turns[-1].mark(LAT_FIRST_TOKEN)
+                        for s in splitter.feed(event.text):
+                            await self._emit(ts, s, on_sentence)
+                    elif event.type == "content_block_stop":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            deadline.reschedule(None)
+                            self._run_tool(ts, block.id, block.name, block.input)
+                        elif block.type == "text" and (tail := splitter.flush()):
+                            await self._emit(ts, tail, on_sentence)     # don't hold the last sentence back
+                if tail := splitter.flush():
+                    await self._emit(ts, tail, on_sentence)
+                final = await stream.get_final_message()
         for block in final.content:        # anything whose stop event we didn't see
             if block.type == "tool_use":
                 self._run_tool(ts, block.id, block.name, block.input)
@@ -384,9 +440,42 @@ class Agent:
         ts.stats.sentences += 1
         await on_sentence(sentence)
 
-    async def _fallback(self, ts: _Turn, on_sentence: OnSentence) -> None:
-        """API down or failing: say the step's canned line so the user isn't left in silence."""
-        await self._emit(ts, self.state.current_step.fallback, on_sentence)
+    async def _failed(self, ts: _Turn, on_sentence: OnSentence, error: str) -> None:
+        """The API was too slow, down, refused, or has no credentials. Record it, and unless the user already
+        heard something (or this was a silent check-in) speak the step's canned line instead of going quiet.
+        The canned line is spoken once per step; later failures on the same step say a short apology."""
+        ts.stats.error = error
+        log.warning("agent turn failed: %s", error)
+        self.state.log("system", f"agent fallback: {error}")
+        if ts.spoken or ts.checkin:
+            return
+        step = self.state.step              # not ts.step: the intent router may have advanced it meanwhile
+        line = REPEAT_FALLBACK if step in self._fallback_steps else self.state.current_step.fallback
+        self._fallback_steps.add(step)
+        try:
+            await self._emit(ts, line, on_sentence)
+        except Exception:
+            log.exception("could not speak the fallback line")
+
+    async def _backstop(self, ts: _Turn, on_sentence: OnSentence) -> None:
+        """The model answered with tool calls only. The user only hears audio, so that is silence: say a short
+        line built from what the tools did. (The prompt forbids this and Haiku obeys; Opus still does it ~1 in 4.)"""
+        uses = {u["id"]: u for u in ts.tool_uses}
+        line = None
+        for r in ts.results:
+            use = uses.get(r["tool_use_id"], {})
+            result, obj = str(r.get("content", "")), use.get("input", {}).get("name")
+            if use.get("name") == "propose_done" and result.startswith("push_back"):
+                reason = result.partition(": ")[2]
+                line = f"Hold on, {reason}." if reason else "Hold on, that doesn't look finished yet."
+                break
+            if use.get("name") == "point_at" and obj:
+                line = f"Here's the {obj}." if result == "ok" else (
+                    f"I can't see the {obj} right now." if result == "not_visible" else line)
+        if line is None:                    # nothing to describe: at least say where they are
+            line = f"You're on step {self.state.step + 1}: {self.state.current_step.short}."
+        log.info("silent turn (tools only: %s): speaking %r", ts.stats.tools, line)
+        await self._emit(ts, line, on_sentence)
 
     def _run_tool(self, ts: _Turn, tool_id: str, name: str, inp) -> None:
         """Run one tool as soon as its input is complete. The result is deferred to the next user turn."""

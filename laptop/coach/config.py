@@ -20,9 +20,16 @@ class Config:
     ctl_port: int = int(_env("CTL_PORT", "4210"))
     control_hz: float = 30.0
 
-    # Claude. Measure latency of these against each other on day 1 (see docs/architecture.md).
-    model: str = _env("CLAUDE_MODEL", "claude-haiku-5-5")
+    # Claude. Default = Opus 5.5 low effort + fast mode: it won the B0 bake-off (first sentence ~1.2 s median
+    # vs ~2 s for Haiku and standard Opus; see docs). Set CLAUDE_MODEL=claude-haiku-5-5 CLAUDE_FAST=0 for the
+    # cheap option (~76x cheaper per request, ~0.4 s slower).
+    model: str = _env("CLAUDE_MODEL", "claude-opus-5-5")
     effort: str = _env("CLAUDE_EFFORT", "low")
+    # Opus 5.5 "fast mode": same model, faster output, 2x price ($8/$40 per MTok). Ignored by other models.
+    fast: bool = _env("CLAUDE_FAST", "1").lower() in ("1", "true", "yes")
+    # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
+    # usually under 1.5 s but has an occasional slow turn; Haiku is steadier, so 3 is enough there.
+    first_token_timeout_s: float = float(_env("FIRST_TOKEN_TIMEOUT_S", "5.0"))
     watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # B3: cheap model that reads frames in the background
     frames_per_turn: int = 3         # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending
