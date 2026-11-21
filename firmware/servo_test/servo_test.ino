@@ -26,7 +26,7 @@
 //   ?        print the current angles
 // The laser starts OFF. Point the pan-tilt at a wall and keep faces out of the way.
 //
-// NO-LAPTOP MODE: if nothing is typed within 10 s of power-up, it sweeps forever on its own,
+// NO-LAPTOP MODE: if nothing is typed within 3 s of power-up (AUTO_START_MS), it sweeps forever on its own,
 // with the laser ON (AUTO_LASER). Point it at a wall.
 // Use it to run the ESP from the power bank too (bank 5 V -> ESP 5V pin, USB unplugged):
 // the ESP's own current keeps the bank from switching itself off.
@@ -45,7 +45,8 @@ const int PIN_PAN = 4, PIN_TILT = 5, PIN_LASER = 6;
 const int PAN_MIN = 10, PAN_MAX = 170;
 const int TILT_MIN = 0, TILT_MAX = 180;  // full range here, to find the limits. control_s3.ino clamps it.
 const bool AUTO_LASER = true;            // laser on during the no-laptop auto sweep
-const int STEP_MS = 12;                  // slew speed: 1 deg every 12 ms (smooth, gentle on the power)
+const int STEP_MS = 12;
+const uint32_t AUTO_START_MS = 3000;   // no-laptop mode starts this long after boot if nothing is typed                  // slew speed: 1 deg every 12 ms (smooth, gentle on the power)
 
 LedcServo pan, tilt;
 void slew(LedcServo &s, int &cur, int target);  // explicit prototype (keeps the Arduino IDE from guessing one above the struct)
@@ -110,7 +111,7 @@ void setup() {
 
 void loop() {
   if (!Serial.available()) {
-    if (!gotCmd && millis() > 10000) {  // no-laptop mode
+    if (!gotCmd && millis() > AUTO_START_MS) {  // no-laptop mode
       if (AUTO_LASER && !laserOn) { laserOn = true; digitalWrite(PIN_LASER, HIGH); }
       sweep(); delay(1000);
     } else if (repeatSweep) { sweep(); delay(1000); }
