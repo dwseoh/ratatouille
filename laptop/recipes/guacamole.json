@@ -1,0 +1,13 @@
+{
+  "name": "Guacamole",
+  "objects": ["avocado", "lime", "onion", "tomato", "cilantro", "knife", "bowl", "cutting board", "fork", "salt"],
+  "steps": [
+    {"short": "halve avocados", "say": "Cut the avocados in half lengthwise around the pit.", "done_when": "avocado halves visible, cut faces up"},
+    {"short": "remove pits", "say": "Remove the pits and scoop the flesh into the bowl.", "done_when": "green flesh in bowl, empty skins"},
+    {"short": "mash", "say": "Mash the avocado with a fork, leave it a bit chunky.", "done_when": "mashed texture in bowl"},
+    {"short": "dice onion", "say": "Finely dice about a quarter of an onion.", "done_when": "small onion pieces on board"},
+    {"short": "dice tomato", "say": "Dice one tomato and add it with the onion.", "done_when": "tomato and onion in bowl"},
+    {"short": "lime + salt", "say": "Squeeze in half a lime and add a pinch of salt.", "done_when": "lime squeezed over bowl"},
+    {"short": "cilantro, mix", "say": "Chop some cilantro, add it, and stir everything together.", "done_when": "mixed, green flecks visible"}
+  ]
+}

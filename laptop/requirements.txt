@@ -1,0 +1,8 @@
+anthropic
+ultralytics
+opencv-python
+numpy
+python-dotenv
+sounddevice
+fastapi
+uvicorn
