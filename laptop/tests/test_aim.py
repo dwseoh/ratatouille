@@ -169,6 +169,14 @@ def test_clamp_pan(rig):
     assert link.pan == pytest.approx(170.0) and aimer.on_target
 
 
+def test_clamp_tilt(rig):
+    aimer, link, st, clock = rig
+    aimer.calib = Calibration().fit(grid_pixels(), [(90.0, 150.0)] * 25)   # a bad fit: tilt 150 (aims up)
+    aimer.point_at("lime")
+    run_ticks(aimer, clock, 60)
+    assert link.tilt == pytest.approx(Aimer.TILT_MAX) and aimer.on_target
+
+
 def test_follows_moving_target(rig):
     aimer, link, st, clock = rig
     aimer.point_at("lime")

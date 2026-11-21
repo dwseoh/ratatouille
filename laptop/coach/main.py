@@ -43,7 +43,6 @@ from .contracts import (
     FakeLink,
     FakeSpeech,
     FakeSteps,
-    KeywordRouter,
     Recipe,
     State,
     fake_dets,
@@ -129,7 +128,8 @@ async def health_loop(frames, link, calib) -> None:
 async def type_loop(app: "App", lines=None) -> None:
     """--type: keyboard instead of the voice pipeline. Same fast intents, then an agent turn.
     `lines` (a list) is for tests; otherwise reads stdin until an empty line / Ctrl-D."""
-    router = KeywordRouter(app.state.recipe)
+    from .intents import IntentRouter      # B's router, as in voice mode (strict STOP, fuzzy names)
+    router = IntentRouter(app.state.recipe, use_embeddings=not lines)   # tests (lines=...) skip the model
     it = iter(lines) if lines is not None else None
     app.state.session = "active"
     while True:
@@ -147,12 +147,16 @@ async def type_loop(app: "App", lines=None) -> None:
         if r.intent.value == "point" and r.obj:
             print(f"  [intent] point_at({r.obj}) -> {app.aimer.point_at(r.obj)}")
         elif r.intent.value == "done":
-            print(f"  [intent] done -> {app.steps.propose_done('user', evidence=text)}")
+            verdict = app.steps.propose_done('user', evidence=text)
+            if verdict in ("advance", "finished"):
+                app.aimer.laser_off()            # the target belonged to the step that just ended
+            print(f"  [intent] done -> {verdict}")
         elif r.intent.value == "start_over":
             app.aimer.laser_off(); app.steps.reset(); app.link.reset()
             print("  [intent] start over")
             continue
         elif r.intent.value == "stop":
+            app.aimer.laser_off()
             app.speech.stop()
             continue
         # camera down: no frames at all (the agent then tells the user once), never stale ones

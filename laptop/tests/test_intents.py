@@ -161,3 +161,20 @@ def test_stop_and_start_over_skip_the_agent(router):
     a.new_utterance()
     assert asyncio.run(a.on_final("start over")) is True
     assert a.session.resets == 1
+
+
+def test_stop_turns_the_laser_off(router):
+    a, state = make_actions(router)
+    asyncio.run(a.on_interim("where's the lime"))
+    assert state.target == "lime"
+    a.new_utterance()
+    asyncio.run(a.on_interim("stop"))
+    assert state.target is None and a.speech.stops == 1
+
+
+def test_done_that_advances_turns_the_laser_off(router):
+    a, state = make_actions(router)
+    asyncio.run(a.on_interim("where's the lime"))
+    a.new_utterance()
+    asyncio.run(a.on_final("ok I'm done"))
+    assert state.step == 1 and state.target is None

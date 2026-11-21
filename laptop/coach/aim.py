@@ -80,6 +80,7 @@ class Aimer:
     """Implements AimerAPI. Call point_at()/laser_off() from the asyncio loop; run() is the control loop."""
 
     PAN_MIN, PAN_MAX = 10.0, 170.0
+    TILT_MIN, TILT_MAX = 20.0, 100.0   # same as control_s3.ino: a second guard so a bad fit never aims up
     MAX_STEP_DEG = 4.0      # rate limit per tick
     DEADBAND_DEG = 0.5      # don't send changes smaller than this (servo buzz)
     SMOOTH_N = 3            # mean of the last N target centres
@@ -177,6 +178,7 @@ class Aimer:
         if self.closed_loop:
             gp, gt = gp + self.trim[0], gt + self.trim[1]
         gp = min(max(gp, self.PAN_MIN), self.PAN_MAX)
+        gt = min(max(gt, self.TILT_MIN), self.TILT_MAX)
         self.goal = (gp, gt)
         pan, tilt = self._step(self.link.pan, gp), self._step(self.link.tilt, gt)
         if (pan, tilt) != (self.link.pan, self.link.tilt):

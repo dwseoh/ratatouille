@@ -231,11 +231,14 @@ class IntentActions:
         self._acted.add(key)
         logger.info(f"intent {r.intent.name} ({r.score:.2f}) from {text!r}")
         if r.intent is Intent.STOP:
+            self.aimer.laser_off()               # "stop" means everything, not just the voice
             if self.speech:
                 self.speech.stop()
         elif r.intent is Intent.DONE:
             verdict = self.steps.propose_done("user", evidence=text)
             self.state.log("user", f"said done -> {verdict}")
+            if verdict in ("advance", "finished"):
+                self.aimer.laser_off()           # the target belonged to the step that just ended
         elif r.intent is Intent.START_OVER:
             if self.session is not None:
                 await self.session.reset()
