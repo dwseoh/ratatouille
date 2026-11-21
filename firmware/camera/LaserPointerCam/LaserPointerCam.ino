@@ -13,7 +13,7 @@
   compute for real object detection.
 
   Arduino IDE settings (same as Freenove Chapter 6):
-    Board: "ESP32 Wrover Module"   PSRAM: Enabled
+    Board: "ESP32 Wrover Mo dule"   PSRAM: Enabled
     Partition scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
   Works with arduino-esp32 core 2.x and 3.x. No extra libraries needed.
 */
@@ -26,8 +26,7 @@
 
 // ---------------- USER SETTINGS ----------------
 // Phone/laptop hotspot (2.4 GHz)
-const char *WIFI_SSID = "HOTSPOT_SSID";
-const char *WIFI_PASS = "HOTSPOT_PASSWORD";
+#include "secrets.h"   // WIFI_SSID, WIFI_PASS (copy secrets.example.h; gitignored)
 const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 
 // Pins NOT used by the camera (see Freenove "Cam Pin" table).
@@ -128,7 +127,7 @@ static bool cameraInit() {
   c.xclk_freq_hz = 10000000;
   c.pixel_format = PIXFORMAT_JPEG;
   c.frame_size   = FRAMESIZE_VGA;     // 640x480 (README spec)
-  c.jpeg_quality = 12;                // lower number = better quality, bigger frames
+  c.jpeg_quality = 15;                // lower number = better quality, bigger frames
   if (psramFound()) {
     c.fb_count    = 2;
     c.fb_location = CAMERA_FB_IN_PSRAM;
@@ -159,8 +158,12 @@ static esp_err_t streamHandler(httpd_req_t *req) {
   char hdr[64];
   int misses = 0;
   uint32_t frames = 0;
+  // Stats, printed every 2 s: where does each frame's time go? (capture vs Wi-Fi send)
+  uint32_t statN = 0, statGetMs = 0, statSendMs = 0, statBytes = 0, statT0 = millis();
   while (true) {
+    uint32_t t0 = millis();
     camera_fb_t *fb = esp_camera_fb_get();
+    uint32_t t1 = millis();
     if (!fb) {
       // fb_get already waits ~4 s internally, so a few misses = camera stalled.
       // Bail out instead of spinning forever and locking the server.
@@ -174,9 +177,18 @@ static esp_err_t streamHandler(httpd_req_t *req) {
     esp_err_t r = httpd_resp_send_chunk(req, "\r\n--" BOUNDARY "\r\n", strlen("\r\n--" BOUNDARY "\r\n"));
     if (r == ESP_OK) r = httpd_resp_send_chunk(req, hdr, hl);
     if (r == ESP_OK) r = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
+    size_t len = fb->len;
     esp_camera_fb_return(fb);              // ALWAYS returned -> no buffer leak
     if (r != ESP_OK) break;   // client disconnected (or send timed out)
     frames++;
+    statN++; statGetMs += t1 - t0; statSendMs += millis() - t1; statBytes += len;
+    if (millis() - statT0 >= 2000) {
+      float secs = (millis() - statT0) / 1000.0f;
+      Serial.printf("[stream] %.1f fps | capture %lu ms | send %lu ms | %lu KB/frame | %.0f KB/s | RSSI %d dBm\n",
+                    statN / secs, (unsigned long)(statGetMs / statN), (unsigned long)(statSendMs / statN),
+                    (unsigned long)(statBytes / statN / 1024), statBytes / 1024.0f / secs, WiFi.RSSI());
+      statN = statGetMs = statSendMs = statBytes = 0; statT0 = millis();
+    }
     delay(1);                 // yield so Wi-Fi/UDP tasks get CPU time
   }
   Serial.printf("[stream] client gone after %u frames\n", (unsigned)frames);
@@ -219,6 +231,9 @@ static void pollUdp() {
 
 void setup() {
   Serial.begin(115200);
+  delay(500);                             // let the serial monitor catch the first lines
+  Serial.printf("\n[boot] camera board starting (PSRAM %s, %u bytes)\n",
+                psramFound() ? "found" : "NOT found", (unsigned)ESP.getPsramSize());
   pinMode(LASER_PIN, OUTPUT);
   digitalWrite(LASER_PIN, LOW);           // laser OFF at boot
 
@@ -226,12 +241,15 @@ void setup() {
     Serial.println("Camera init failed - check PSRAM enabled / board selection");
     while (true) delay(1000);
   }
+  Serial.println("[boot] camera OK");
 
   servoAttach(PAN_PIN, PAN_CH);
   servoAttach(TILT_PIN, TILT_CH);
   servoWrite(PAN_PIN, PAN_CH, curPan);
   servoWrite(TILT_PIN, TILT_CH, curTilt);
+  Serial.println("[boot] servos OK");
 
+  Serial.printf("[boot] joining WiFi \"%s\" (dots = still trying)\n", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(300); Serial.print("."); }
   WiFi.setSleep(false);                   // after connecting: lower, steadier latency

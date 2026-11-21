@@ -41,7 +41,8 @@ class Config:
     turn_fallback_secs: float = float(_env("TURN_FALLBACK_SECS", "0.9"))  # silence that ends a turn when smart-turn isn't sure
 
     yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
-    yolo_device: str = _env("YOLO_DEVICE", "mps")   # M2 GPU
+    yolo_device: str = _env("YOLO_DEVICE", "mps")   # Apple GPU
+    yolo_imgsz: int = int(_env("YOLO_IMGSZ", "640"))   # 480 is faster, 640 finds small things better
     recipe_path: str = _env("RECIPE", "recipes/guacamole.json")
     dashboard_port: int = int(_env("DASHBOARD_PORT", "8000"))
     laser_close_px: int = 10          # dot within this many px of the target = on target

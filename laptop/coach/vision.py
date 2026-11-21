@@ -1,22 +1,125 @@
-"""Perception: YOLO-World object boxes + red laser dot. Runs every frame in a worker thread."""
+"""Perception: YOLO-World object boxes (B) + red laser dot (A).
+
+Detector side (B, P3):
+- `Detector`: YOLO-World with the recipe objects + "hand" as classes, per-class confidence thresholds.
+- `Smoother`: an object counts as visible if seen in 2 of the last 3 frames; reports its newest boxes.
+- `DetectorThread`: runs the detector in a worker thread on `frames.latest()` only (never a backlog),
+  as fast as it goes, and hands results to the asyncio loop with call_soon_threadsafe. It is the only
+  writer of State.dets. Boxes stay in camera-frame pixels (the aimer uses `State.det(name).center`).
+Measured on an M2 (mps): ~50 fps at imgsz 640, ~70 fps at 480. Try it: python -m tools.try_yolo 0
+"""
+import threading
+import time
+from collections import deque
+
 import cv2
 import numpy as np
+from loguru import logger
 
 from .contracts import Det  # shared detection type (name, conf, box, center)
 
+HAND = "hand"                       # extra YOLO class for the safety check, not a recipe object
+DEFAULT_CONF = 0.15
+CLASS_CONF = {HAND: 0.25}           # raise the classes that false-trigger; tune on the real counter
+STALE_S = 1.0                       # no new camera frame for this long -> State.dets = []
+
 
 class Detector:
-    def __init__(self, weights: str, device: str, classes: list[str]):
+    def __init__(self, weights: str, device: str, classes: list[str], *, imgsz: int = 640,
+                 conf: dict[str, float] | None = None):
         from ultralytics import YOLOWorld  # heavy import, keep lazy
+        self.classes = list(dict.fromkeys([*classes, HAND]))
         self.model = YOLOWorld(weights)
-        self.model.set_classes(classes)
-        self.device = device
+        self.model.set_classes(self.classes)
+        self.device, self.imgsz = device, imgsz
+        self.conf = {**CLASS_CONF, **(conf or {})}
+        self._floor = min(DEFAULT_CONF, *self.conf.values())   # model-level cut, per-class after
 
-    def detect(self, frame, conf: float = 0.15) -> list[Det]:
-        r = self.model.predict(frame, device=self.device, imgsz=640, conf=conf, verbose=False)[0]
+    def threshold(self, name: str) -> float:
+        return self.conf.get(name, DEFAULT_CONF)
+
+    def detect(self, frame) -> list[Det]:
+        r = self.model.predict(frame, device=self.device, imgsz=self.imgsz, conf=self._floor, verbose=False)[0]
         names = r.names
-        return [Det(names[int(c)], float(p), tuple(map(float, b)))
+        dets = [Det(names[int(c)], float(p), tuple(map(float, b)))
                 for b, c, p in zip(r.boxes.xyxy.tolist(), r.boxes.cls.tolist(), r.boxes.conf.tolist())]
+        return [d for d in dets if d.conf >= self.threshold(d.name)]
+
+
+class Smoother:
+    """Visible = seen in >= k of the last n frames. Returns the boxes from the newest frame it was seen in,
+    so one missed frame doesn't make the laser drop its target, and one false hit doesn't show up."""
+
+    def __init__(self, n: int = 3, k: int = 2):
+        self.k = k
+        self._hist: deque[dict[str, list[Det]]] = deque(maxlen=n)
+
+    def update(self, dets: list[Det]) -> list[Det]:
+        frame: dict[str, list[Det]] = {}
+        for d in dets:
+            frame.setdefault(d.name, []).append(d)
+        self._hist.append(frame)
+        out: list[Det] = []
+        for name in {n for f in self._hist for n in f}:
+            seen = [f[name] for f in self._hist if name in f]
+            if len(seen) >= self.k:
+                out.extend(seen[-1])
+        return out
+
+    def clear(self) -> None:
+        self._hist.clear()
+
+
+class DetectorThread:
+    """Runs a Detector on the newest frame in a thread; the only writer of State.dets (on the loop)."""
+
+    def __init__(self, detector, frames, state, loop, smoother: Smoother | None = None):
+        self.detector, self.frames, self.state, self.loop = detector, frames, state, loop
+        self.smoother = smoother or Smoother()
+        self.fps = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "DetectorThread":
+        self._thread = threading.Thread(target=self._run, name="yolo", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _apply(self, dets: list[Det]) -> None:          # runs on the asyncio loop
+        self.state.dets = dets
+
+    def _publish(self, dets: list[Det]) -> None:
+        try:
+            self.loop.call_soon_threadsafe(self._apply, dets)
+        except RuntimeError:                            # loop closed during shutdown
+            self._stop.set()
+
+    def _run(self) -> None:
+        last_t, last_new = None, time.monotonic()
+        while not self._stop.is_set():
+            frame, t = self.frames.latest()
+            if frame is None or t == last_t:
+                if self.state.dets and time.monotonic() - last_new > STALE_S:
+                    self.smoother.clear()
+                    self._publish([])                   # camera gone: don't aim at old boxes
+                time.sleep(0.005)
+                continue
+            last_t, last_new = t, time.monotonic()
+            t0 = time.perf_counter()
+            try:
+                dets = self.detector.detect(frame)
+            except Exception:
+                logger.exception("YOLO detect failed")
+                time.sleep(0.5)
+                continue
+            self._publish(self.smoother.update(dets))
+            dt = time.perf_counter() - t0
+            self.fps = 1 / dt if not self.fps else 0.9 * self.fps + 0.1 / dt
 
 
 # ── Laser dot (A, stretch). Everything below is dw127's; the blink check + State.dot writer is in dot.py. ──
