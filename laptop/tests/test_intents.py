@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from coach.contracts import FakeAimer, FakeSteps, Intent, IntentRouterAPI, Recipe, State, fake_dets
-from coach.intents import IntentActions, IntentRouter
+from coach.intents import IntentActions, IntentRouter, ends_with_stop, is_short_stop
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 P, D, R, S, X, O = Intent.POINT, Intent.DONE, Intent.REPEAT, Intent.STOP, Intent.START_OVER, Intent.OTHER
@@ -30,6 +30,15 @@ CASES = [
     ("can you show me the chopping board", P, "cutting board"),
     ("wait, where's the lime", P, "lime"),
     ("how much lime should I add", P, "lime"),          # point-first: naming a visible object shows it
+    # real speech: filler, contractions, plurals after "where's", STT misspellings
+    ("um where's the lime", P, "lime"),
+    ("where'd the bowl go", P, "bowl"),
+    ("find me the cilantro", P, "cilantro"),
+    ("show me where the salt is", P, "salt"),
+    ("where's the tomatoes", P, "tomato"),
+    ("where's the avacado", P, "avocado"),
+    ("where is the cutting bored", P, "cutting board"),
+    ("where's the lime juice", P, "lime"),
     # DONE
     ("ok I'm done", D, None),
     ("finished", D, None),
@@ -37,6 +46,10 @@ CASES = [
     ("next step please", D, None),
     ("ok I did that", D, None),
     ("I've mashed it", D, None),
+    ("all done", D, None),
+    ("okay what now", D, None),
+    ("got it what's next", D, None),
+    ("alright I finished cutting", D, None),
     ("I think it's all chopped up now", D, None),
     ("ready to move on", D, None),
     # REPEAT
@@ -45,15 +58,27 @@ CASES = [
     ("can you repeat that", R, None),
     ("I didn't catch that", R, None),
     ("what did you say", R, None),
+    ("pardon", R, None),
+    ("one more time", R, None),
+    ("could you say that again please", R, None),
     # STOP: strict
     ("stop", S, None),
     ("wait", S, None),
     ("hold on", S, None),
     ("ok stop", S, None),
+    ("shh", S, None),
+    ("pause", S, None),
+    ("one sec", S, None),
+    ("wait wait", S, None),
+    ("stop talking", S, None),
+    ("hold on a second", S, None),                       # filler doesn't count toward STOP_MAX_WORDS
+    ("wait just a minute please", S, None),
     # START_OVER
     ("start over", X, None),
     ("let's start over", X, None),
     ("can we restart", X, None),
+    ("start from scratch", X, None),
+    ("from the top", X, None),
     # OTHER
     ("how chunky should it be", O, None),
     ("is this ripe", O, None),
@@ -62,6 +87,11 @@ CASES = [
     ("why do we add salt at the end", P, "salt"),        # names salt -> laser shows it, agent answers
     ("what are we making today", O, None),
     ("thanks", O, None),
+    ("how long do I mash it", O, None),
+    ("what's the next ingredient after this", O, None),  # "next" inside a question: not DONE
+    ("this is the best guacamole", O, None),
+    ("don't stop", O, None),                             # negated: never cut the coach off
+    ("I can't wait to eat this", O, None),
     ("I'm going to stop by the store later to get more stuff", O, None),  # long: not STOP
 ]
 
@@ -178,3 +208,21 @@ def test_done_that_advances_turns_the_laser_off(router):
     a.new_utterance()
     asyncio.run(a.on_final("ok I'm done"))
     assert state.step == 1 and state.target is None
+
+
+@pytest.mark.parametrize("text,stop", [
+    ("hold on a second", True), ("wait, where's the lime", False), ("don't stop", False),
+    ("no wait", True), ("I'm going to stop by the store later", False),
+])
+def test_short_stop(text, stop):
+    assert is_short_stop(text) is stop
+
+
+@pytest.mark.parametrize("heard,stop", [
+    ("cut the avocado in half stop", True),               # coach's words + the user's "stop"
+    ("cut the avocado in half hold on a second", True),
+    ("push the knife in until it hits the pit", False),
+    ("rotate it don't stop", False),
+])
+def test_echo_gate_tail(heard, stop):
+    assert ends_with_stop(heard) is stop

@@ -244,3 +244,108 @@ def test_speaking_queues_the_caption_and_stopping_clears_it():
     assert proc.captions.speaking
     proc.captions.reset()
     assert not proc.captions.speaking and proc.captions.current() == "You said: hello."
+
+
+# -- Speech priorities (no pipeline: a stand-in processor records what would be spoken) -------------
+
+class RecProc:
+    def __init__(self):
+        self.said, self.stops, self.replying = [], 0, False
+
+    async def speak(self, text):
+        self.said.append(text)
+
+    async def stop(self):
+        self.stops += 1
+        self.said.append("<cut>")
+
+    def create_task(self, coro, name):
+        return asyncio.get_running_loop().create_task(coro)
+
+
+def speech_rig():
+    proc, state = RecProc(), State(RECIPE, session="active")
+    return Speech(proc, state), proc, state
+
+
+def test_reply_speaks_at_once():
+    sp, proc, _ = speech_rig()
+    asyncio.run(sp.say("an answer"))
+    assert proc.said == ["an answer"] and proc.stops == 0
+
+
+def test_safety_cuts_then_speaks():
+    from coach.contracts import Priority
+    sp, proc, _ = speech_rig()
+
+    async def go():
+        await sp.say("first sentence")
+        await sp.say("careful, knife near your hand", Priority.SAFETY)
+
+    asyncio.run(go())
+    assert proc.said == ["first sentence", "<cut>", "careful, knife near your hand"]
+
+
+def test_proactive_waits_for_quiet_and_keeps_order():
+    from coach.contracts import Priority
+    sp, proc, state = speech_rig()
+
+    async def go():
+        state.user_talking = True
+        await sp.say("check-in one", Priority.PROACTIVE)
+        await sp.say("check-in two", Priority.PROACTIVE)
+        await asyncio.sleep(0.2)
+        held = list(proc.said)
+        state.user_talking = False
+        await asyncio.sleep(0.2)
+        return held
+
+    held = asyncio.run(go())
+    assert held == [] and proc.said == ["check-in one", "check-in two"]
+
+
+def test_proactive_waits_while_the_coach_answers_the_user():
+    from coach.contracts import Priority
+    sp, proc, _ = speech_rig()
+
+    async def go():
+        proc.replying = True
+        await sp.say("by the way", Priority.PROACTIVE)
+        await sp.say("the answer", Priority.REPLY)
+        await asyncio.sleep(0.15)
+        proc.replying = False
+        await asyncio.sleep(0.15)
+
+    asyncio.run(go())
+    assert proc.said == ["the answer", "by the way"]
+
+
+def test_stale_proactive_is_dropped(monkeypatch):
+    from coach.contracts import Priority
+    sp, proc, state = speech_rig()
+    monkeypatch.setattr(Speech, "PROACTIVE_MAX_AGE_S", 0.1)
+
+    async def go():
+        state.user_talking = True
+        await sp.say("too late", Priority.PROACTIVE)
+        await asyncio.sleep(0.3)
+        state.user_talking = False
+        await asyncio.sleep(0.1)
+
+    asyncio.run(go())
+    assert proc.said == []
+
+
+def test_stop_drops_queued_proactive():
+    from coach.contracts import Priority
+    sp, proc, state = speech_rig()
+
+    async def go():
+        state.user_talking = True
+        await sp.say("never said", Priority.PROACTIVE)
+        sp.stop()
+        state.user_talking = False
+        await asyncio.sleep(0.15)
+
+    asyncio.run(go())
+    assert proc.said == ["<cut>"]

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -254,6 +255,11 @@ class AgentProcessor(FrameProcessor):
         task, self._task = self._task, None
         await self.cancel_task(task)
 
+    @property
+    def replying(self) -> bool:
+        """An agent turn the user triggered is running (agent_turn() ones carry no user text)."""
+        return self._task is not None and not self._task.done() and bool(self._task_text)
+
     # -- SpeechAPI backing ------------------------------------------------------------------------
 
     async def speak(self, text: str) -> None:
@@ -297,24 +303,62 @@ class CaptionTap(FrameProcessor):
 
 
 class Speech:
-    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this."""
+    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this.
 
-    def __init__(self, proc: AgentProcessor, state: State):
-        self._proc, self._state = proc, state
+    Priorities (say):
+      SAFETY    cuts whatever is playing (and the running agent turn), then speaks at once.
+      REPLY     spoken at once, queued behind any audio already playing.
+      PROACTIVE held while the user talks or the coach is answering them; spoken in order once that's
+                over, dropped if it waited more than PROACTIVE_MAX_AGE_S (a stale check-in is worse than none).
+    """
+
+    PROACTIVE_MAX_AGE_S = 3.0
+    POLL_S = 0.05
+
+    def __init__(self, proc: AgentProcessor, state: State, *, clock=time.monotonic):
+        self._proc, self._state, self._clock = proc, state, clock
+        self._proactive: deque[tuple[str, float]] = deque()
+        self._worker: asyncio.Task | None = None
 
     @property
     def speaking(self) -> bool:
         return self._state.speaking
 
     async def say(self, text: str, priority: Priority = Priority.REPLY) -> None:
-        # v1: no priority queue. PROACTIVE callers check State.user_talking / speaking themselves.
-        await self._proc.speak(text)
+        if priority >= Priority.SAFETY:
+            self._proactive.clear()
+            await self._proc.stop()               # returns once the audio is cut
+            await self._proc.speak(text)
+        elif priority <= Priority.PROACTIVE:
+            self._proactive.append((text, self._clock()))
+            if self._worker is None or self._worker.done():
+                self._worker = asyncio.get_running_loop().create_task(self._drain())
+        else:
+            await self._proc.speak(text)
+
+    def _blocked(self) -> bool:
+        return self._state.user_talking or self._proc.replying
+
+    async def _drain(self) -> None:
+        """Speak queued PROACTIVE sentences in order, once nobody is talking; drop the stale ones."""
+        while self._proactive:
+            text, t = self._proactive[0]
+            if self._clock() - t > self.PROACTIVE_MAX_AGE_S:
+                self._proactive.popleft()
+                logger.info(f"proactive dropped (waited > {self.PROACTIVE_MAX_AGE_S:.0f} s): {text!r}")
+            elif self._blocked():
+                await asyncio.sleep(self.POLL_S)
+            else:
+                self._proactive.popleft()
+                await self._proc.speak(text)
 
     def stop(self) -> None:
+        self._proactive.clear()
         self._proc.create_task(self._proc.stop(), "speech_stop")
 
     async def interrupt(self) -> None:
         """Like stop(), but returns once the audio is cut (so a chime pushed next isn't cut too)."""
+        self._proactive.clear()
         await self._proc.stop()
 
     async def chime(self, kind: str) -> None:
