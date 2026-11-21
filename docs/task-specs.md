@@ -243,9 +243,9 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
 - **Done when:** you say "hey, what's step one", it answers out loud, and talking over it stops it.
 
 #### V2. Speech API: priorities + proactive (B, Sat AM, S)
-- **File:** `voice.py`, implementing C5 on top of V1: push a TTS frame from outside the pipeline (for the watcher and safety
+- **File:** `voice.py`, implementing C5 on top of V1: push a TTS frame from outside the pipeline (for the watcher and check-in
   lines), the priority rules, dropping PROACTIVE lines older than 3 s, and `speaking`.
-- **Blocks:** C's watcher speaking up, and the safety warnings.
+- **Blocks:** C's watcher and check-ins speaking up.
 - **Done when:** unit tests show SAFETY cuts in, PROACTIVE waits for silence, and stale lines get dropped.
 
 #### V3. Echo + Bluetooth audio (B, Sat AM, S)
@@ -287,7 +287,7 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
   `call_soon_threadsafe`. Measure fps on the M5 with `mps`, and try `imgsz` 480 vs 640.
 - Per-class confidence thresholds. Smoothing: an object counts as "visible" if it was seen in 2 of the last 3 frames.
 - Bring real avocados, limes and onions, and test on a real counter.
-- **Blocks:** A's aimer (target boxes), C's safety check + watcher triggers, the dashboard.
+- **Blocks:** A's aimer (target boxes), C's watcher triggers, the dashboard.
   **Mock until then:** a fixed `dets` list.
 - **Done when:** ≥10 fps, and avocado / lime / bowl found in ≥80% of frames.
 
@@ -342,15 +342,13 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
 - Haiku 5.5 with 3-4 frames from `history` (≤384 px), the current step's `done_when`, and the event log.
   Structured output: `{events: [str], step_done: bool, confidence, note}`.
 - New events are appended to the log. `step_done` with high confidence → `Steps.propose_done("vision")`.
-- **Safety, local, no LLM:** a `knife` box overlapping or within ~40 px of a `hand` box for 3 frames in a row →
-  `Speech.say("Careful, fingers!", SAFETY)`, at most once every 10 s.
+- ~~Safety, local knife-near-hand warning~~: **cut** (fires constantly while cutting; knife safety is in the step `tips`).
 - **Done when:** a webcam run of halving an avocado logs "avocado halved" within ~5 s of it happening.
 
 #### B5. Fallbacks (C, Sun AM, S)
 - An API timeout (first token > 3 s) or error → speak the step's canned `say` line, and keyword pointing still works.
 - No camera → the agent says so once, and voice still works.
-- **Done when:** the demo runs through all 7 steps with WiFi off after startup (local STT/TTS fallback: macOS `say` + typed input
-  if Deepgram is unreachable).
+- **Done when:** with the API slowed or failing, all 7 steps still get a spoken canned line. (Offline mode / WiFi-off demo is cut, see cut-list.md.)
 
 #### S2. Dashboard (C, Sat PM → Sun AM, M)
 - **File:** `laptop/coach/dashboard.py` (draft exists). FastAPI in the same process:
@@ -381,10 +379,10 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
 |---|---|---|---|---|
 | everyone | all | `contracts.py` committed | Fri, first hour | none |
 | B (P3), C (watcher), C (dashboard) | A | P1 frame grabber pushed | Fri night | `cv2.VideoCapture(0)` directly |
-| A (aimer), C (watcher, safety, dashboard) | B | P3 writing `State.dets` | Sat 10 am | fixed `dets` list |
+| A (aimer), C (watcher, dashboard) | B | P3 writing `State.dets` | Sat 10 am | fixed `dets` list |
 | B (V1 integration) | C | `Agent.turn` / `cancel` working with typed input | Sat 10 am | echo bot: repeats the user |
 | C (agent speaks) | B | V1 talking end to end | Sat 10 am | `FakeSpeech` (`say`) |
-| C (watcher proactive + safety) | B | V2 `say(text, priority)` | Sat noon | `FakeSpeech` |
+| C (watcher proactive) | B | V2 `say(text, priority)` | Sat noon | `FakeSpeech` |
 | B (V4), C (tools) | A | Aimer `point_at` / `laser_off` real | Sat 6 pm | `FakeAimer` |
 | A (P5, P6) | A | H1 box mounted, F1, F2 | Sat 2 pm | webcam + loose pan-tilt for P4 |
 | B (V5 reset) | A | F2 sends `B`, P2 `on_button` | Sat noon | `fake_s3.py` Enter key |
@@ -403,7 +401,7 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
 |---|---|---|---|---|
 | Fri night | K0, P1, P2 + fake S3, F1, F2 test, solder + 2nd servo, print holder | K0, **V1 Pipecat**, P3 fps test | K0, B0 bake-off, B1 typed, B2 + tests | 11 pm: contracts in, model picked |
 | Sat AM | Print + build box (H1), P4 dot finder | V2, V3, V4, V5, P3 tuning | B1 ↔ V1 wired together, B3 watcher start | **10 am: voice talks to the agent** (else Vapi) |
-| Sat PM | Mount, F3, P5 calibration, P6 aimer | S1 telemetry, help A test aiming | B3 + safety, S2 dashboard | **6 pm: spoken word → laser on a real avocado** |
+| Sat PM | Mount, F3, P5 calibration, P6 aimer | S1 telemetry, help A test aiming | B3a check-ins, S2 dashboard | **6 pm: spoken word → laser on a real avocado** |
 | Sat eve | S3 integration (all) | | | First full run recorded |
 | Sun AM | Aim tuning under venue light | Echo / latency tuning | B5 fallbacks, prompt tuning | |
 | Sun PM | S4 rehearsals + backup video (all) | | | Demo |

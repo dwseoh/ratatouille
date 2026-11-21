@@ -41,6 +41,8 @@ EMBED_MIN = {           # per-intent cosine threshold; START_OVER resets the ses
 STOP_MAX_WORDS = 3      # "stop", "ok stop", "wait wait": yes. "wait, where's the lime": no.
 
 STOP_WORDS = {"stop", "wait", "hold on", "shh", "shush", "quiet", "pause", "one sec", "one second"}
+STOP_FILLER = {"a", "just", "please", "second", "sec", "minute", "moment", "up"}   # not counted: "hold on a second"
+STOP_NEGATED = ("don't stop", "dont stop", "do not stop", "never stop", "can't wait", "cant wait")
 START_OVER_PHRASES = ("start over", "restart", "start again", "begin again", "from the top",
                       "reset", "from scratch")
 REPEAT_PHRASES = ("say that again", "repeat that", "repeat", "what did you say", "come again",
@@ -90,6 +92,36 @@ def _has(t: str, phrase: str) -> bool:
     return f" {phrase} " in f" {t} "
 
 
+def _stop_words(text: str) -> list[str]:
+    """The words that count toward STOP_MAX_WORDS: filler ("a second", "please") dropped."""
+    return [w for w in normalize(text).split() if w not in STOP_FILLER]
+
+
+def is_stop(text: str) -> bool:
+    """A stop word anywhere in `text`, not negated ("don't stop"). The caller limits the length."""
+    t = normalize(text)
+    for n in STOP_NEGATED:
+        t = f" {t} ".replace(f" {n} ", " ").strip()
+    return any(_has(t, w) for w in STOP_WORDS)
+
+
+def is_short_stop(text: str) -> bool:
+    """STOP as the router means it: a stop word in an utterance of at most STOP_MAX_WORDS real words."""
+    return len(_stop_words(text)) <= STOP_MAX_WORDS and is_stop(text)
+
+
+def ends_with_stop(text: str) -> bool:
+    """A stop word in the last STOP_MAX_WORDS words. For the echo gate: while the coach talks, the mic
+    hears its words too, so "...cut the avocado in half stop" is the user saying stop."""
+    words = normalize(text).split()
+    tail = []                                   # last STOP_MAX_WORDS real words, plus filler between them
+    for w in reversed(words):
+        if len([x for x in tail if x not in STOP_FILLER]) >= STOP_MAX_WORDS and w not in STOP_FILLER:
+            break
+        tail.insert(0, w)
+    return is_stop(" ".join(tail))
+
+
 class IntentRouter:
     """IntentRouterAPI. `use_embeddings=False` skips the model (tests, or if it won't load)."""
 
@@ -121,7 +153,7 @@ class IntentRouter:
             return IntentResult(Intent.OTHER, score=0.0)
         words = t.split()
 
-        if len(words) <= STOP_MAX_WORDS and any(_has(t, w) for w in STOP_WORDS):
+        if is_short_stop(t):
             return IntentResult(Intent.STOP)
         if any(_has(t, p) for p in START_OVER_PHRASES):
             return IntentResult(Intent.START_OVER)
@@ -219,11 +251,14 @@ class IntentActions:
         self._acted.add(key)
         logger.info(f"intent {r.intent.name} ({r.score:.2f}) from {text!r}")
         if r.intent is Intent.STOP:
+            self.aimer.laser_off()               # "stop" means everything, not just the voice
             if self.speech:
                 self.speech.stop()
         elif r.intent is Intent.DONE:
             verdict = self.steps.propose_done("user", evidence=text)
             self.state.log("user", f"said done -> {verdict}")
+            if verdict in ("advance", "finished"):
+                self.aimer.laser_off()           # the target belonged to the step that just ended
         elif r.intent is Intent.START_OVER:
             if self.session is not None:
                 await self.session.reset()

@@ -24,12 +24,24 @@ class Config:
     # vs ~2 s for Haiku and standard Opus; see docs). Set CLAUDE_MODEL=claude-haiku-5-5 CLAUDE_FAST=0 for the
     # cheap option (~76x cheaper per request, ~0.4 s slower).
     model: str = _env("CLAUDE_MODEL", "claude-opus-5-5")
-    effort: str = _env("CLAUDE_EFFORT", "low")
+    # COACH_EFFORT, not CLAUDE_EFFORT: Claude Code sets CLAUDE_EFFORT in its own shell, and a shell variable beats .env.
+    effort: str = _env("COACH_EFFORT", "low")
     # Opus 5.5 "fast mode": same model, faster output, 2x price ($8/$40 per MTok). Ignored by other models.
     fast: bool = _env("CLAUDE_FAST", "1").lower() in ("1", "true", "yes")
     # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
     # usually under 1.5 s but has an occasional slow turn; Haiku is steadier, so 3 is enough there.
     first_token_timeout_s: float = float(_env("FIRST_TOKEN_TIMEOUT_S", "5.0"))
+    # If the main model gives no first token in time, retry ONCE on this faster model before falling back to the
+    # canned step line. Empty = no retry. Cache for it is warmed at startup too.
+    backup_model: str = _env("BACKUP_MODEL", "claude-haiku-5-5")
+    backup_timeout_s: float = float(_env("BACKUP_TIMEOUT_S", "3.0"))      # first-token deadline for that retry
+    # How often the coach speaks unprompted: off | gentle (45 s of silence) | normal (20 s). Users can say "talk less".
+    checkins: str = _env("CHECKINS", "normal")
+    # Trust the user: "I'm done" always moves on. 1 = let the camera push back once when it clearly disagrees.
+    pushback_done: bool = _env("PUSHBACK_DONE", "0").lower() in ("1", "true", "yes")
+    # Accessibility: start in plain-language mode (short sentences, one action each, no idioms or numbers).
+    # Users can also say "say it simpler" / "too fast" during the session.
+    plain_language: bool = _env("PLAIN_LANGUAGE", "0").lower() in ("1", "true", "yes")
     watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # B3: cheap model that reads frames in the background
     frames_per_turn: int = 3         # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending
@@ -39,9 +51,17 @@ class Config:
     tts_voice: str = _env("TTS_VOICE", "aura-2-helena-en")
     vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.2"))   # pause that triggers the smart-turn check
     turn_fallback_secs: float = float(_env("TURN_FALLBACK_SECS", "0.9"))  # silence that ends a turn when smart-turn isn't sure
+    # Audio devices by name substring (`python -m tools.try_voice --devices`). Empty = macOS default.
+    # Use a separate mic: a speaker's built-in mic drops Bluetooth into call mode (both sides sound bad).
+    mic_name: str = _env("MIC_NAME", "")
+    speaker_name: str = _env("SPEAKER_NAME", "")
+    # Echo gate: while the coach talks (+ tail), only "stop"/"wait"/"hold on" interrupts. 0 for headphones.
+    echo_gate: bool = _env("ECHO_GATE", "1").lower() in ("1", "true", "yes")
+    echo_tail_s: float = float(_env("ECHO_TAIL_S", "0.3"))   # raise to ~0.5 if a Bluetooth speaker lags
 
     yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
-    yolo_device: str = _env("YOLO_DEVICE", "mps")   # M2 GPU
+    yolo_device: str = _env("YOLO_DEVICE", "mps")   # Apple GPU
+    yolo_imgsz: int = int(_env("YOLO_IMGSZ", "640"))   # 480 is faster, 640 finds small things better
     recipe_path: str = _env("RECIPE", "recipes/guacamole.json")
     dashboard_port: int = int(_env("DASHBOARD_PORT", "8000"))
     laser_close_px: int = 10          # dot within this many px of the target = on target

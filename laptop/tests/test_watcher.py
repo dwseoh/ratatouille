@@ -1,4 +1,4 @@
-"""Watcher tests: trigger rules, applying the model's answer, safety check. Offline: fake client, frames, speech."""
+"""Watcher tests: trigger rules, applying the model's answer. Offline: fake client, frames, speech."""
 import asyncio
 import json
 import time
@@ -11,7 +11,7 @@ from coach import watcher as W
 from coach.config import Config
 from coach.contracts import Det, FakeSteps, Priority, Recipe, State
 from coach.steps import StepVerdict, Steps
-from coach.watcher import Watcher, box_gap
+from coach.watcher import Watcher
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 CFG = Config()
@@ -314,7 +314,7 @@ def test_verdict_drives_a_pushback_in_steps():
     async def go():
         st = State(RECIPE)
         w, st, clk, sp, client, _ = make(answer(done=False, conf=0.9, note="whole avocados"))
-        steps = Steps(st, verdict_provider=w.latest_verdict, clock=clk)
+        steps = Steps(st, verdict_provider=w.latest_verdict, clock=clk, pushback=True)
         w.steps = steps
         await run_check(w)
         assert steps.propose_done("user") == "push_back" and steps.reason == "whole avocados"
@@ -338,77 +338,6 @@ def test_failures_are_swallowed():
             w, st, clk, *_ = make(bad)
             await run_check(w)
             assert st.events == [] and w._verdict is None
-    run(go())
-
-
-# ───────────── safety ─────────────
-
-def hand_knife(gap):
-    return [Det("knife", 0.9, (100, 100, 200, 130)), Det("hand", 0.9, (200 + gap, 100, 260 + gap, 160))]
-
-
-def test_box_gap():
-    assert box_gap((0, 0, 10, 10), (5, 5, 20, 20)) == 0
-    assert box_gap((0, 0, 10, 10), (13, 0, 20, 10)) == 3
-    assert box_gap((0, 0, 10, 10), (13, 14, 20, 20)) == 5
-
-
-def test_knife_near_hand_for_three_updates_warns_once_with_cooldown():
-    async def go():
-        w, st, clk, sp, *_ = make(visible=())
-        for i in range(2):
-            st.dets = hand_knife(10)
-            await w.tick()
-        assert sp.said == []                                      # only 2 updates so far
-        st.dets = hand_knife(10)
-        await w.tick()
-        assert sp.said == [(W.SAFETY_LINE, Priority.SAFETY)]
-        for _ in range(5):
-            st.dets = hand_knife(0)
-            await w.tick()
-        assert len(sp.said) == 1                                  # cooldown
-        clk.t += W.SAFETY_COOLDOWN_S + 1
-        st.dets = hand_knife(0)
-        await w.tick()
-        assert len(sp.said) == 2
-    run(go())
-
-
-def test_safety_needs_consecutive_updates_and_a_new_detection_list():
-    async def go():
-        w, st, clk, sp, *_ = make(visible=())
-        st.dets = hand_knife(10)
-        await w.tick()
-        st.dets = hand_knife(300)                                 # apart: streak resets
-        await w.tick()
-        st.dets = hand_knife(10)
-        await w.tick()
-        st.dets = hand_knife(10)
-        await w.tick()
-        assert sp.said == []
-        for _ in range(10):                                       # same list object ticking again isn't a new frame
-            await w.tick()
-        assert sp.said == []
-        st.dets = hand_knife(10)
-        await w.tick()
-        assert len(sp.said) == 1
-    run(go())
-
-
-def test_safety_fires_even_while_the_coach_is_speaking_but_not_when_idle():
-    async def go():
-        w, st, clk, sp, *_ = make(visible=())
-        st.speaking = True
-        for _ in range(3):
-            st.dets = hand_knife(0)
-            await w.tick()
-        assert len(sp.said) == 1
-        st.session = "idle"
-        clk.t += 100
-        for _ in range(3):
-            st.dets = hand_knife(0)
-            await w.tick()
-        assert len(sp.said) == 1
     run(go())
 
 
@@ -492,10 +421,38 @@ def test_question_waits_while_coach_speaks_or_user_talks():
 
 
 def test_the_model_check_itself_never_speaks():
-    """Only the safety line and the question ever reach the speaker; a normal check adds events only."""
+    """Only the question ever reaches the speaker; a normal check adds events only."""
     async def go():
         w, st, clk, sp, client, _ = make(answer(["avocado halved"], done=False, conf=0.9, note="x"))
         st.speaking = False
         await run_check(w)
         assert sp.said == []
+    run(go())
+
+
+# ───────────── "ignore the camera": the watcher goes quiet too ─────────────
+
+def test_ignored_camera_means_no_looking_no_verdicts_no_questions():
+    async def go():
+        flag = {"ignored": False}
+        asked = []
+
+        async def on_ask(t):
+            asked.append(t)
+        w, st, clk, sp, client, _ = make(answer(done=False, conf=0.9, note="x"), on_ask=on_ask)
+        w._ignored = lambda: flag["ignored"]
+        await run_check(w)
+        assert len(client.requests) == 1 and w.latest_verdict(0) is not None
+        flag["ignored"] = True
+        assert w.latest_verdict(0) is None                         # B2 must not push back on a covered camera's say-so
+        w._pending_ask = (st.step, "[check-in: ready?]")
+        clk.t += 100
+        st.dets = [Det("lime", 0.9, (0, 0, 10, 10))]
+        st.last_activity = time.monotonic() - 60
+        await run_check(w)
+        assert len(client.requests) == 1 and asked == [] and w._pending_ask is None
+        flag["ignored"] = False
+        clk.t += 100
+        await run_check(w)
+        assert len(client.requests) == 2                           # looks again once the user wants the camera back
     run(go())

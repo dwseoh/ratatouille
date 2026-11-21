@@ -90,7 +90,7 @@ Done when: every risky dependency has been run once on the real laptop.
 ### Phase 4: Sun morning: demo polish
 
 - [ ] Dashboard: annotated feed, step, transcript, event log, latency bars
-- [ ] Prompt tuning: shorter replies, it points more, it only proactively warns about safety
+- [ ] Prompt tuning: shorter replies, it points more, it only speaks up unprompted through check-ins
 - [ ] Pre-warm cache at startup, canned fallback lines if the API is slow or down
 - [ ] 5 full rehearsals with the 2-minute pitch script
 - [ ] **Record a backup demo video** (in case the venue WiFi dies)
@@ -124,7 +124,7 @@ Without these numbers we can't tell what to optimise, and judges love seeing the
 | Venue WiFi or captive portal | Phone hotspot (planned anyway) |
 | YOLO misses an object | Lower the confidence, add synonyms, or fixed counter positions per ingredient |
 | Laser dot not detectable in bright light | Dim the demo area, a whiter counter mat, blink detection |
-| API slow or down | Canned per-step lines + keyword pointing still work offline |
+| API slow or down | Canned per-step lines + keyword pointing still work (no offline mode: the camera needs the hotspot anyway) |
 | Board brownouts | NiMH pack for the servos (schematic) |
 | Calibration drifts when the box shifts | Closed loop corrects it, re-run the sweep before the demo |
 

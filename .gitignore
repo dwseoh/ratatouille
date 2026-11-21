@@ -5,6 +5,7 @@ __pycache__/
 *.pt
 *.mlpackage
 calibration.json
+logs/
 firmware/**/secrets.h
 .DS_Store
 

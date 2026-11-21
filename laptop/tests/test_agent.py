@@ -10,7 +10,7 @@ import numpy as np
 
 from coach.agent import KEEP_TURNS, Agent, SentenceSplitter, make_handlers, validate_tool_input
 from coach.config import Config
-from coach.contracts import FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets
+from coach.contracts import Det, FakeAimer, FakeLink, FakeSteps, Recipe, State, fake_dets
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 CFG = Config()
@@ -407,7 +407,7 @@ def test_pushback_reason_reaches_the_model_via_the_tool_result():
     s1 = FakeStream([text("Looks mashed to me. "), tool("a", "propose_done", {})], "tool_use")
     s2 = FakeStream([text("Hold on, not yet then. ")])
     agent, st, client, aimer = make_agent(s1, s2, step=2)
-    steps = Steps(st, None, lambda step: StepVerdict(False, 0.9, "still big chunks of avocado"))
+    steps = Steps(st, None, lambda step: StepVerdict(False, 0.9, "still big chunks of avocado"), pushback=True)
     agent.handlers = make_handlers(st, aimer, steps, FakeLink())
     run(agent.turn("I'm done", [], Sink()))
     run(agent.turn("really?", [], Sink()))
@@ -424,6 +424,7 @@ def test_no_first_token_in_time_speaks_the_canned_line():
     slow = FakeStream([text("Too late to matter now. ")], delay=0.3)
     nxt = FakeStream([text("Back to normal now, thanks. ")])
     agent, st, client, _ = make_agent(slow, nxt)
+    agent.cfg = Config(backup_model="")                         # no retry model: straight to the canned line
     agent.first_token_timeout = 0.05
     sink = Sink()
     stats = run(agent.turn("where do I start?", [], sink))
@@ -579,7 +580,7 @@ def test_tools_only_pushback_relays_the_reason_and_other_tools_fall_back_to_the_
     from coach.steps import StepVerdict, Steps
     s1 = FakeStream([tool("a", "propose_done", {})], "tool_use")
     agent, st, client, aimer = make_agent(s1, step=2)
-    agent.handlers = make_handlers(st, aimer, Steps(st, None, lambda s: StepVerdict(False, 0.9, "it's still chunky")), FakeLink())
+    agent.handlers = make_handlers(st, aimer, Steps(st, None, lambda s: StepVerdict(False, 0.9, "it's still chunky"), pushback=True), FakeLink())
     sink = Sink()
     run(agent.turn("I'm done", [], sink))
     assert sink.sentences == ["Hold on, it's still chunky."]
@@ -609,3 +610,337 @@ def test_fast_mode_is_never_sent_to_models_that_dont_support_it():
     assert "speed" not in agent._params([])
     run(agent.prewarm())
     assert "speed" not in client.creates[0]
+
+
+# ───────────── accessibility (C.md 4b) ─────────────
+
+from coach.agent import SYSTEM, positions  # noqa: E402
+
+
+def _det(name, cx, cy, conf=0.9):
+    return Det(name, conf, (cx - 5, cy - 5, cx + 5, cy + 5))
+
+
+def test_positions_in_words():
+    dets = [_det("lime", 100, 400), _det("bowl", 320, 100), _det("onion", 600, 300), _det("hand", 320, 400),
+            _det("lime", 500, 100, conf=0.2)]
+    assert positions(dets, 640, 480) == {"lime": "left, near", "bowl": "centre, far", "onion": "right, near"}
+
+
+def test_note_says_where_things_are_and_what_the_coach_last_said():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    s1 = FakeStream([text("Press down with the fork now. ")])
+    s2 = FakeStream([text("Okay, keep going like that. ")])
+    agent, st, client, _ = make_agent(s1, s2)
+    st.dets = [_det("lime", 100, 400), _det("bowl", 320, 100)]
+    run(agent.turn("how's this?", [frame], Sink()))
+    run(agent.turn("and now?", [frame], Sink()))
+    note = client.requests[1]["messages"][-1]["content"][-1]["text"]
+    assert "visible: bowl (centre, far), lime (left, near) |" in note
+    assert 'you last said: "Press down with the fork now."' in note
+
+
+def test_no_positions_without_frames():
+    agent, st, client, _ = make_agent(FakeStream([text("Okay, I'll go from the recipe. ")]))
+    run(agent.turn("hi", [], Sink()))
+    note = client.requests[0]["messages"][-1]["content"][-1]["text"]
+    assert "(left" not in note and "(centre" not in note and "(right" not in note and "visible: avocado" in note
+
+
+def test_plain_language_can_be_switched_on_and_off_by_voice():
+    streams = [FakeStream([text("Sure, using simple words now. ")]) for _ in range(4)]
+    agent, st, client, _ = make_agent(*streams)
+
+    def turn_text(i):
+        return client.requests[i]["messages"][-1]["content"][-1]["text"]
+    run(agent.turn("how do I cut it?", [], Sink()))
+    run(agent.turn("can you say it simpler", [], Sink()))
+    run(agent.turn("and then?", [], Sink()))
+    run(agent.turn("ok back to normal", [], Sink()))
+    assert "[mode: plain]" not in turn_text(0)
+    assert "[mode: plain]" in turn_text(1) and "[setting changed: plain language is now ON]" in turn_text(1)
+    assert "[mode: plain]" in turn_text(2) and "setting changed" not in turn_text(2)          # sticky, no repeat
+    assert "[mode: plain]" not in turn_text(3) and "plain language is now OFF" in turn_text(3)
+
+
+def test_plain_language_can_start_on_from_config():
+    agent, *_ = make_agent()
+    assert agent.plain is False
+    st = State(RECIPE)
+    assert Agent(Config(plain_language=True), st, {}).plain is True
+
+
+def test_talk_less_and_more_change_the_checkin_level():
+    from coach.checkin import CheckIns
+    streams = [FakeStream([text("Okay, I'll stay quieter. ")]) for _ in range(5)]
+    agent, st, client, _ = make_agent(*streams)
+    agent.checkins = CheckIns(st, agent, None, None, FakeSteps(st), level="normal")
+    run(agent.turn("please talk less", [], Sink()))
+    assert agent.checkins.level == "gentle"
+    run(agent.turn("talk less", [], Sink()))
+    assert agent.checkins.level == "off"
+    run(agent.turn("talk less", [], Sink()))                                   # already off: nothing to change
+    assert agent.checkins.level == "off"
+    run(agent.turn("you can talk more", [], Sink()))
+    assert agent.checkins.level == "gentle"
+    last = client.requests[3]["messages"][-1]["content"][-1]["text"]
+    assert "[setting changed:" in last and "check-ins: gentle" in last
+    assert "setting changed" not in client.requests[2]["messages"][-1]["content"][-1]["text"]
+
+
+def test_preferences_ignore_check_in_turns_and_unrelated_speech():
+    from coach.checkin import CheckIns
+    streams = [FakeStream([text("Fine, that sounds good. ")]), FakeStream([text("SKIP")])]
+    agent, st, client, _ = make_agent(*streams)
+    agent.checkins = CheckIns(st, agent, None, None, FakeSteps(st), level="normal")
+    run(agent.turn("how do I cut the avocado, and how simple can it be?", [], Sink()))      # not a request
+    run(agent.turn("[check-in: they said talk less simpler too fast]", [], Sink()))           # app text, never a preference
+    assert agent.plain is False and agent.checkins.level == "normal"
+
+
+def test_prompt_has_the_accessibility_rules_and_no_time_pressure():
+    for must in ("[mode: plain]", "Where am I?", "on your left", "Never rush"):
+        assert must in SYSTEM
+    assert "quickly" not in SYSTEM.replace('no "quickly"', "")                # only appears as the thing to avoid
+
+
+def test_backstop_says_where_the_object_is():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    s1 = FakeStream([tool("a", "point_at", {"name": "lime"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    st.dets = [_det("lime", 100, 400)]
+    sink = Sink()
+    run(agent.turn("show me the lime", [frame], sink))
+    assert sink.sentences == ["Here's the lime, on your left."]
+
+
+def test_sentences_that_talk_about_the_instructions_are_never_spoken():
+    s1 = FakeStream([text("In plain mode I give one or two actions. The user is holding the avocado in their hands. "),
+                     text("Put the avocado flat on the board. Keep your fingers curled away from the knife. ")])
+    agent, *_ = make_agent(s1)
+    sink = Sink()
+    stats = run(agent.turn("how do I cut it?", [], sink))
+    assert sink.sentences == ["Put the avocado flat on the board.", "Keep your fingers curled away from the knife."]
+    assert stats.sentences == 2 and all("plain mode" not in x for x in agent.recent_sentences)
+
+
+def test_normal_sentences_that_mention_a_mode_word_in_passing_still_pass():
+    s1 = FakeStream([text("Mash it with the back of the fork. Leave it a bit chunky. ")])
+    agent, *_ = make_agent(s1)
+    sink = Sink()
+    run(agent.turn("mash?", [], sink))
+    assert len(sink.sentences) == 2
+
+
+def test_prompt_tells_the_model_to_talk_to_the_cook():
+    from coach.agent import SYSTEM
+    assert 'Talk TO the cook as "you"' in SYSTEM
+
+
+# ───────────── slow main model -> retry once on the backup model ─────────────
+
+def _slow(delay=0.3):
+    return FakeStream([text("Too late to matter now. ")], delay=delay)
+
+
+def make_retry(*streams, **cfg):
+    agent, st, client, aimer = make_agent(*streams)
+    agent.cfg = Config(model="claude-opus-5-5", fast=True, backup_model="claude-haiku-5-5",
+                       backup_timeout_s=0.05, **cfg)
+    agent.first_token_timeout = 0.05
+    return agent, st, client
+
+
+def test_slow_main_model_is_retried_once_on_the_backup_model():
+    ok = FakeStream([text("Start by halving the avocados. ")])
+    agent, st, client = make_retry(_slow(), ok)
+    sink = Sink()
+    stats = run(agent.turn("where do I start?", [], sink))
+    assert sink.sentences == ["Start by halving the avocados."] and stats.error is None and not stats.cancelled
+    assert [r["model"] for r in client.requests] == ["claude-opus-5-5", "claude-haiku-5-5"]
+    assert client.requests[0].get("speed") == "fast" and "speed" not in client.requests[1]       # no fast mode on Haiku
+    assert "fallbacks" in client.requests[0] and "fallbacks" not in client.requests[1]
+    assert client.requests[1]["messages"] == client.requests[0]["messages"]                      # same history
+    assert stats.ttft_s >= 0.05                                  # counts the wait the user actually had
+    events = [e.text for e in st.events if e.source == "system"]
+    assert any("too slow, retrying on claude-haiku-5-5" in e for e in events) and any("answered by" in e for e in events)
+
+
+def test_retry_that_also_times_out_speaks_the_canned_line_once():
+    agent, st, client = make_retry(_slow(), _slow())
+    sink = Sink()
+    stats = run(agent.turn("where do I start?", [], sink))
+    assert sink.sentences == [RECIPE.steps[0].fallback] and "timeout" in stats.error
+    assert len(client.requests) == 2                              # exactly one retry, never more
+    assert not agent.busy
+
+
+def test_tools_run_on_the_retry_and_history_stays_valid():
+    ok = FakeStream([text("Here is the lime now. "), tool("t1", "point_at", {"name": "lime"})], "tool_use")
+    nxt = FakeStream([text("Okay, carrying on from there. ")])
+    agent, st, client = make_retry(_slow(), ok, nxt)
+    sink = Sink()
+    run(agent.turn("where's the lime?", [], sink))
+    run(agent.turn("thanks", [], Sink()))
+    assert_valid(client.requests[2]["messages"])
+    assert client.requests[2]["messages"][-1]["content"][0]["tool_use_id"] == "t1"
+    assert st.target == "lime"                                   # the tool ran on the retry
+
+
+def test_no_retry_when_disabled_or_when_the_main_model_is_already_the_backup():
+    for cfg in ({"backup_model": ""}, {"backup_model": "claude-opus-5-5"}):
+        agent, st, client = make_retry(_slow(), FakeStream([text("never used")]))
+        agent.cfg = Config(model="claude-opus-5-5", **cfg)
+        sink = Sink()
+        stats = run(agent.turn("hi", [], sink))
+        assert len(client.requests) == 1 and sink.sentences == [RECIPE.steps[0].fallback] and "timeout" in stats.error
+
+
+def test_api_errors_do_not_trigger_the_retry():
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    agent, st, client = make_retry(FakeStream([], fail=err), FakeStream([text("never used")]))
+    sink = Sink()
+    stats = run(agent.turn("hi", [], sink))
+    assert len(client.requests) == 1 and stats.error and "APIConnectionError" in stats.error
+
+
+def test_a_fast_main_model_never_retries():
+    agent, st, client = make_retry(FakeStream([text("Quick answer for you. ")]))
+    sink = Sink()
+    run(agent.turn("hi", [], sink))
+    assert len(client.requests) == 1 and sink.sentences == ["Quick answer for you."]
+
+
+def test_prewarm_warms_the_backup_model_too_without_fast_mode():
+    agent, _, client = make_retry()
+    run(agent.prewarm())
+    by_model = {c["model"]: c for c in client.creates}
+    assert set(by_model) == {"claude-opus-5-5", "claude-haiku-5-5"}
+    assert by_model["claude-opus-5-5"].get("speed") == "fast" and "speed" not in by_model["claude-haiku-5-5"]
+    agent.cfg = Config(model="claude-opus-5-5", backup_model="")
+    client.creates.clear()
+    run(agent.prewarm())
+    assert [c["model"] for c in client.creates] == ["claude-opus-5-5"]
+
+
+def test_backup_settings_come_from_config():
+    assert Config(backup_model="x", backup_timeout_s=2.5).backup_timeout_s == 2.5
+
+
+# ───────────── better backstop: relay push-backs, real greeting, never repeat itself ─────────────
+
+def test_backstop_relays_a_pushback_the_router_already_handled():
+    s1 = FakeStream([tool("a", "show_text", {"text": "1/7"})], "tool_use")             # model said nothing, no propose_done
+    agent, st, *_ = make_agent(s1)
+    st.log("user", "said done -> push_back")
+    st.log("system", "user said step 1 is done, watcher disagrees: I only see a person in a lobby, no avocado in view yet.")
+    sink = Sink()
+    run(agent.turn("Okay. I'm done.", [], sink))
+    assert sink.sentences == ["Hold on, I only see a person in a lobby, no avocado in view yet."]
+
+
+def test_an_old_pushback_is_not_relayed_again():
+    s1 = FakeStream([tool("a", "show_text", {"text": "1/7"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    st.log("system", "user said step 1 is done, watcher disagrees: still whole avocados")
+    st.events[-1] = type(st.events[-1])(st.events[-1].t - 60, "system", st.events[-1].text)       # a minute ago
+    sink = Sink()
+    run(agent.turn("what now", [], sink))
+    assert "still whole avocados" not in " ".join(sink.sentences)
+
+
+def test_tools_only_greeting_gets_a_real_introduction():
+    s1 = FakeStream([tool("a", "show_text", {"text": "Step 1"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    sink = Sink()
+    run(agent.turn("[session start: greet briefly and explain step 1]", [], sink))
+    assert sink.sentences == [f"Hi, I'm Remy. {RECIPE.steps[0].fallback}"]
+
+
+def test_backstop_never_repeats_the_line_it_just_said():
+    streams = [FakeStream([tool(f"t{i}", "show_text", {"text": "x"})], "tool_use") for i in range(3)]
+    agent, st, *_ = make_agent(*streams)
+    sinks = [Sink(), Sink(), Sink()]
+    for sink in sinks:
+        run(agent.turn("where am I", [], sink))
+    assert sinks[0].sentences == [f"You're on step 1: {RECIPE.steps[0].short}."]
+    assert sinks[1].sentences == [RECIPE.steps[0].fallback]             # not the same line again
+    first_action = RECIPE.steps[0].how[0]
+    assert sinks[2].sentences == [first_action[:1].upper() + first_action[1:] + "."]   # then the step's actions, one by one
+
+
+def test_prompt_tells_the_model_to_relay_a_pushback():
+    from coach.agent import SYSTEM
+    assert "push_back" in SYSTEM and "watcher's words" in SYSTEM
+
+
+def test_greeting_wins_over_a_pointing_tool_in_the_backstop():
+    s1 = FakeStream([tool("a", "point_at", {"name": "knife"})], "tool_use")
+    agent, st, *_ = make_agent(s1)
+    sink = Sink()
+    run(agent.turn("[session start: greet briefly and explain step 1]", [], sink))
+    assert sink.sentences == [f"Hi, I'm Remy. {RECIPE.steps[0].fallback}"]
+
+
+# ───────────── "ignore the camera" ─────────────
+
+from coach.agent import _camera_preference  # noqa: E402
+
+
+def test_camera_preference_phrases():
+    for t in ("just ignore the camera", "Ignore the camera please", "forget about the camera", "stop mentioning the camera",
+              "don't worry about the camera", "my camera is covered, ignore it, camera", "stop looking",
+              "turn off the camera", "don't use the camera", "I don't want to use the camera, ignore the camera"):
+        assert _camera_preference(t) is True, t
+    for t in ("use the camera again", "ok you can use the camera", "I uncovered the camera", "look again", "camera back on"):
+        assert _camera_preference(t) is False, t
+    for t in ("how do I cut the avocado", "where's the camera pointing", "the camera is covered", "ignore the knife",
+              "ignore it", "what's next"):
+        assert _camera_preference(t) is None, t
+
+
+def test_ignoring_the_camera_sends_no_images_never_mentions_it_and_sticks_until_told_otherwise():
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    streams = [FakeStream([text("Okay, I'll go by what you tell me. ")]) for _ in range(4)]
+    agent, st, client, _ = make_agent(*streams)
+
+    def req(i):
+        c = client.requests[i]["messages"][-1]["content"]
+        return c, c[-1]["text"]
+    run(agent.turn("how's this look?", [frame], Sink()))
+    run(agent.turn("my camera is covered, just ignore the camera", [frame], Sink()))
+    run(agent.turn("how do I mash it?", [frame], Sink()))                        # frames are offered but must be dropped
+    run(agent.turn("ok you can use the camera again", [frame], Sink()))
+    assert any(b["type"] == "image" for b in req(0)[0])
+    c1, t1 = req(1)
+    assert all(b["type"] != "image" for b in c1) and "camera: IGNORED" in t1 and "visible: unknown" in t1
+    assert "[setting changed: the user asked you to IGNORE the camera" in t1 and "OFFLINE" not in t1
+    c2, t2 = req(2)
+    assert all(b["type"] != "image" for b in c2) and "camera: IGNORED" in t2 and "setting changed" not in t2   # sticky, told once
+    c3, t3 = req(3)
+    assert any(b["type"] == "image" for b in c3) and "IGNORED" not in t3 and "camera is back in use" in t3
+    assert agent.camera_ignored is False
+
+
+def test_ignored_camera_also_applies_to_check_ins_and_resets_with_a_new_session():
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    agent, st, client, _ = make_agent(FakeStream([text("SKIP")]), FakeStream([text("Okay, starting fresh now. ")]))
+    agent.camera_ignored = True
+    run(agent.turn("[check-in: quiet]", [frame], Sink()))
+    assert all(b["type"] != "image" for b in client.requests[0]["messages"][-1]["content"])
+    agent._exchanges.append(type("E", (), {"step": 3})())                      # pretend we were on step 4...
+    st.step = 0                                                                 # ...and the recipe restarted
+    agent._exchanges[-1] = _Exchange_stub()
+    run(agent.turn("start", [frame], Sink()))
+    assert agent.camera_ignored is False
+
+
+def _Exchange_stub():
+    from coach.agent import _Exchange
+    return _Exchange(3, {"role": "user", "content": [{"type": "text", "text": "x"}]},
+                     {"role": "assistant", "content": [{"type": "text", "text": "y"}]})
+
+
+def test_prompt_has_the_camera_ignored_rule():
+    from coach.agent import SYSTEM
+    assert "IGNORED" in SYSTEM and "never mention the camera again" in SYSTEM

@@ -7,9 +7,9 @@ Three things can say "this step is finished", and they can disagree:
   vision the watcher sees the step finish                        (propose_done("vision"))
 
 Rules
-  user / llm  -> check the watcher's latest verdict for this step. If it confidently says "not done", push
-                 back ONCE per step (the agent relays `reason`). If the user insists (asks again), advance.
-                 No verdict, a low-confidence one, or "done" -> advance. A missing/slow watcher never blocks.
+  user / llm  -> advance. The user is trusted: if they say the step is done, it is done, whatever the camera shows.
+                 (Optional, off by default, `pushback=True` / PUSHBACK_DONE=1: if the watcher confidently says "not
+                 done", push back ONCE per step; asking again advances. Useful when the camera is reliable.)
   vision      -> never advance by itself: return "ask". The agent asks "looks mashed, ready for the lime?"
                  and `confirm()` advances after the user's yes. Saying "done" instead also advances.
   last step   -> "finished" instead of advancing; the step number stays on the last step.
@@ -48,8 +48,10 @@ class Steps:
     """StepsAPI implementation. `link` and `verdict_provider` are optional (tests, before B3 exists)."""
 
     def __init__(self, state: State, link: ControlLinkAPI | None = None,
-                 verdict_provider: VerdictProvider | None = None, clock: Callable[[], float] = time.monotonic):
+                 verdict_provider: VerdictProvider | None = None, clock: Callable[[], float] = time.monotonic,
+                 pushback: bool = False):
         self.state, self.link, self.verdict_provider, self._clock = state, link, verdict_provider, clock
+        self.pushback = pushback            # let the camera veto a spoken "done" once (off: trust the user)
         self.reason = ""                    # why the last push_back happened (the agent reads this)
         self.finished = False
         self._cbs: list[Callable[[int], None]] = []
@@ -105,7 +107,7 @@ class Steps:
 
     def _decide(self, source: DoneSource) -> Verdict:
         step = self.state.step
-        v = self.verdict_provider(step) if self.verdict_provider else None
+        v = self.verdict_provider(step) if (self.pushback and self.verdict_provider) else None
         if v is not None and not v.done and v.confidence >= PUSHBACK_CONF and step not in self._pushed_back:
             self._pushed_back.add(step)
             self.reason = v.note or "it doesn't look finished yet"

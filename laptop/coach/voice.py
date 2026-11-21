@@ -15,15 +15,23 @@ Barge-in: when a user turn starts, `UserTurnProcessor` cuts the coach's audio (I
 `AgentProcessor` cancels the running agent turn (`agent.cancel()` + the task). If the cut-off turn
 hadn't said anything yet, its text is merged into the next turn instead of being answered twice.
 
+Echo gate (echo.py, ECHO_GATE=1 by default): while the coach is audible, the mic hears it, so only a stop
+word starts a user turn (and cuts the audio); everything else heard then is dropped. With headphones,
+ECHO_GATE=0 brings back barge-in by any speech.
+
+Devices: MIC_NAME / SPEAKER_NAME (.env) pick the mic and speaker by name substring, never "default"
+(macOS switches the default whenever something connects). `python -m tools.try_voice --devices` lists them.
+
 State fields written here (contracts.State, B is the only writer):
   transcript, user_talking, speaking, last_activity, turns (one TurnLatency per user turn).
 
-Try it:  cd laptop && python -m tools.try_voice     (headphones until the echo gate exists)
+Try it:  cd laptop && python -m tools.try_voice
 """
 from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -38,9 +46,13 @@ from pipecat.frames.frames import (
     DataFrame,
     Frame,
     InterimTranscriptionFrame,
+    InterruptionFrame,
     OutputAudioRawFrame,
     TranscriptionFrame,
+    TTSAudioRawFrame,
     TTSSpeakFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
@@ -57,6 +69,7 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from .echo import EchoGate, EchoGateStartStrategy
 from .intents import IntentActions
 from .contracts import (
     LAT_FIRST_AUDIO,
@@ -96,25 +109,35 @@ class AgentProcessor(FrameProcessor):
     """Sits after the turn detector, before TTS. One `agent.turn` per finished user turn."""
 
     def __init__(self, agent: AgentAPI, frames: FrameSource, state: State, *,
-                 actions: IntentActions | None = None, **kwargs):
+                 actions: IntentActions | None = None, gate: EchoGate | None = None, **kwargs):
         super().__init__(**kwargs)
         self.agent, self.frames, self.state = agent, frames, state
+        self.gate = gate or EchoGate(enabled=False)   # shared with EchoGateStartStrategy
+        self._stop_turn = False            # this user turn began over the coach: it's a stop word
         self.actions = actions             # intent router reflexes (point, stop, done, start over)
         self.session = None                # Session attaches itself: wake phrase while idle
+        self.captions = None               # CaptionTimeline (dashboard): one caption at a time, in step with the voice
         self._woke = False                 # this utterance contained the wake phrase
         self._text: list[str] = []         # final transcripts of the current user turn
-        self._carry = ""                   # a turn cut off before it said anything
+        self._carry = ""                   # a turn cut off before it said anything: what was sent to the agent...
+        self._carry_user = ""              # ...and what the USER actually said (no internal prompts)
         self._speech_end: float | None = None
         self._task: asyncio.Task | None = None
-        self._task_text = ""
+        self._task_text = ""               # text sent to the agent (may hold an internal prompt, e.g. the greeting)
+        self._task_user = ""               # just the user's words from that turn
         self._task_spoke = False
         self._lat: TurnLatency | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         st = self.state
+        self.gate.update(frame)
 
         # Transcripts are consumed here, never forwarded: TTS would read any TextFrame out loud.
+        if isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame)) and (
+                self.gate.suppressing or self._stop_turn):
+            logger.debug(f"echo gate: dropped {frame.text!r}")   # the coach's own voice (or a stop word)
+            return
         if isinstance(frame, InterimTranscriptionFrame):
             st.transcript = " ".join(self._text + [frame.text])
             if st.session != "active":
@@ -132,12 +155,15 @@ class AgentProcessor(FrameProcessor):
             return
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
-            st.user_talking, st.last_activity = True, time.monotonic()
+            if not self.gate.suppressing:                 # else probably the coach in the mic
+                st.user_talking, st.last_activity = True, time.monotonic()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             st.user_talking, st.last_activity = False, time.monotonic()
             self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
         elif isinstance(frame, UserStartedSpeakingFrame):
-            await self._cancel_turn("barge-in")        # Pipecat already cut the audio
+            self._stop_turn = self.gate.suppressing      # only a stop word starts a turn over the coach
+            st.user_talking, st.last_activity = True, time.monotonic()
+            await self._cancel_turn("stop word" if self._stop_turn else "barge-in")   # audio already cut
             self._woke = False
             if self.actions:
                 self.actions.new_utterance()
@@ -145,11 +171,15 @@ class AgentProcessor(FrameProcessor):
             await self.queue_frame(_TurnEndFrame())      # runs after the queued transcripts
         elif isinstance(frame, BotStartedSpeakingFrame):
             st.speaking, st.last_activity = True, time.monotonic()
+            if self.captions:
+                self.captions.playback_started()
             if self._lat:
                 self._lat.mark(LAT_FIRST_AUDIO)
                 logger.info(f"turn {self._lat.turn_id} latency ms: {self._lat.ms()}")
         elif isinstance(frame, BotStoppedSpeakingFrame):
             st.speaking, st.last_activity = False, time.monotonic()
+            if self.captions:
+                self.captions.playback_stopped()
 
         await self.push_frame(frame, direction)
 
@@ -158,6 +188,10 @@ class AgentProcessor(FrameProcessor):
     async def _start_turn(self):
         text = " ".join(t for t in self._text if t).strip()
         self._text.clear()
+        if self._stop_turn:                    # audio cut + agent cancelled at turn start; nothing to answer
+            self._stop_turn = False
+            logger.info("stop word over the coach: stopped, no agent turn")
+            return
         if not text:
             return
         if self.state.session != "active":     # idle: only the wake phrase counts
@@ -166,11 +200,13 @@ class AgentProcessor(FrameProcessor):
             self._woke = True
         user_text = text
         if self._woke:                         # "hey Remy, ..." -> one greeting turn (+ whatever else was said)
-            self._woke, self._carry = False, ""
+            self._woke, self._carry, self._carry_user = False, "", ""
             text = self.session.first_turn(text)
         elif self._carry:
-            text, self._carry = f"{self._carry} {text}", ""
-            user_text = text
+            # The agent gets both turns (it may still need the greeting instruction); the transcript and the intent
+            # router only ever get what the user said.
+            text, user_text = f"{self._carry} {text}", f"{self._carry_user} {text}".strip()
+            self._carry = self._carry_user = ""
         self.state.transcript = user_text
         self._lat = TurnLatency(turn_id=len(self.state.turns) + 1)
         self._lat.marks[LAT_SPEECH_END] = self._speech_end or time.monotonic()
@@ -185,10 +221,11 @@ class AgentProcessor(FrameProcessor):
                 return
         logger.info(f"user turn {self._lat.turn_id}: {text!r} "
                     f"(+{(time.monotonic() - self._lat.marks[LAT_SPEECH_END]) * 1000:.0f} ms after speech end)")
-        self._launch(text)
+        self._launch(text, user_text=user_text)
 
-    def _launch(self, text: str, *, carry: bool = True):
+    def _launch(self, text: str, *, carry: bool = True, user_text: str | None = None):
         self._task_text, self._task_spoke = (text if carry else ""), False
+        self._task_user = (user_text if user_text is not None else text) if carry else ""
         self._task = self.create_task(self._run_turn(text), "agent_turn")
 
     async def agent_turn(self, text: str) -> None:
@@ -212,11 +249,16 @@ class AgentProcessor(FrameProcessor):
         if self._task is None or self._task.done():
             return
         if not self._task_spoke and self._task_text:   # still thinking: answer both utterances in one turn
-            self._carry = self._task_text
+            self._carry, self._carry_user = self._task_text, self._task_user
         logger.info(f"{why}: cancelling agent turn")
         self.agent.cancel()
         task, self._task = self._task, None
         await self.cancel_task(task)
+
+    @property
+    def replying(self) -> bool:
+        """An agent turn the user triggered is running (agent_turn() ones carry no user text)."""
+        return self._task is not None and not self._task.done() and bool(self._task_text)
 
     # -- SpeechAPI backing ------------------------------------------------------------------------
 
@@ -224,9 +266,13 @@ class AgentProcessor(FrameProcessor):
         text = text.strip()
         if text:
             self._task_spoke = True
+            if self.captions:
+                self.captions.queue(text)
             await self.push_frame(TTSSpeakFrame(text))
 
     async def stop(self) -> None:
+        if self.captions:
+            self.captions.reset()
         await self._cancel_turn("stop")
         await self.broadcast_interruption()   # cuts TTS + queued audio
 
@@ -235,25 +281,84 @@ class AgentProcessor(FrameProcessor):
         await self.push_frame(_chime_frame(kind))
 
 
-class Speech:
-    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this."""
+class CaptionTap(FrameProcessor):
+    """Sits right after the TTS. Passes everything through untouched, but measures how many seconds of audio each
+    sentence became, so the dashboard caption changes exactly when the voice moves on to the next sentence."""
 
-    def __init__(self, proc: AgentProcessor, state: State):
-        self._proc, self._state = proc, state
+    def __init__(self, captions, **kwargs):
+        super().__init__(**kwargs)
+        self.captions = captions
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSStartedFrame):
+            self.captions.audio_started()
+        elif isinstance(frame, TTSAudioRawFrame):
+            self.captions.audio_chunk(len(frame.audio) / (2 * max(frame.num_channels, 1) * frame.sample_rate))
+        elif isinstance(frame, TTSStoppedFrame):
+            self.captions.audio_stopped()
+        elif isinstance(frame, InterruptionFrame):       # the user talked over the coach: the rest won't be spoken
+            self.captions.reset()
+        await self.push_frame(frame, direction)
+
+
+class Speech:
+    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this.
+
+    Priorities (say):
+      SAFETY    cuts whatever is playing (and the running agent turn), then speaks at once.
+      REPLY     spoken at once, queued behind any audio already playing.
+      PROACTIVE held while the user talks or the coach is answering them; spoken in order once that's
+                over, dropped if it waited more than PROACTIVE_MAX_AGE_S (a stale check-in is worse than none).
+    """
+
+    PROACTIVE_MAX_AGE_S = 3.0
+    POLL_S = 0.05
+
+    def __init__(self, proc: AgentProcessor, state: State, *, clock=time.monotonic):
+        self._proc, self._state, self._clock = proc, state, clock
+        self._proactive: deque[tuple[str, float]] = deque()
+        self._worker: asyncio.Task | None = None
 
     @property
     def speaking(self) -> bool:
         return self._state.speaking
 
     async def say(self, text: str, priority: Priority = Priority.REPLY) -> None:
-        # v1: no priority queue. PROACTIVE callers check State.user_talking / speaking themselves.
-        await self._proc.speak(text)
+        if priority >= Priority.SAFETY:
+            self._proactive.clear()
+            await self._proc.stop()               # returns once the audio is cut
+            await self._proc.speak(text)
+        elif priority <= Priority.PROACTIVE:
+            self._proactive.append((text, self._clock()))
+            if self._worker is None or self._worker.done():
+                self._worker = asyncio.get_running_loop().create_task(self._drain())
+        else:
+            await self._proc.speak(text)
+
+    def _blocked(self) -> bool:
+        return self._state.user_talking or self._proc.replying
+
+    async def _drain(self) -> None:
+        """Speak queued PROACTIVE sentences in order, once nobody is talking; drop the stale ones."""
+        while self._proactive:
+            text, t = self._proactive[0]
+            if self._clock() - t > self.PROACTIVE_MAX_AGE_S:
+                self._proactive.popleft()
+                logger.info(f"proactive dropped (waited > {self.PROACTIVE_MAX_AGE_S:.0f} s): {text!r}")
+            elif self._blocked():
+                await asyncio.sleep(self.POLL_S)
+            else:
+                self._proactive.popleft()
+                await self._proc.speak(text)
 
     def stop(self) -> None:
+        self._proactive.clear()
         self._proc.create_task(self._proc.stop(), "speech_stop")
 
     async def interrupt(self) -> None:
         """Like stop(), but returns once the audio is cut (so a chime pushed next isn't cut too)."""
+        self._proactive.clear()
         await self._proc.stop()
 
     async def chime(self, kind: str) -> None:
@@ -269,34 +374,73 @@ class Speech:
         await self._proc.agent_turn(text)
 
 
+def list_devices() -> list[dict]:
+    """PortAudio devices as PyAudio numbers them (LocalAudioTransport wants PyAudio indexes)."""
+    import pyaudio
+    pa = pyaudio.PyAudio()
+    try:
+        return [pa.get_device_info_by_index(i) for i in range(pa.get_device_count())]
+    finally:
+        pa.terminate()
+
+
+def find_device(name: str, kind: str, devices: list[dict] | None = None) -> int | None:
+    """Index of the first `kind` ("input" / "output") device whose name contains `name` (any case).
+    Empty name -> None (the macOS default). No match -> RuntimeError listing what exists."""
+    if not name:
+        return None
+    devices = devices if devices is not None else list_devices()
+    key = "maxInputChannels" if kind == "input" else "maxOutputChannels"
+    usable = [d for d in devices if d.get(key, 0) > 0]
+    for d in usable:
+        if name.lower() in d["name"].lower():
+            return int(d["index"])
+    names = ", ".join(repr(d["name"]) for d in usable) or "none"
+    raise RuntimeError(f"no {kind} device matching {name!r}. {kind} devices: {names}")
+
+
 def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
-                   actions: IntentActions | None = None,
+                   actions: IntentActions | None = None, captions=None,
                    input_device: int | None = None, output_device: int | None = None):
-    """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py)."""
+    """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py).
+    Devices: explicit indexes win, else MIC_NAME / SPEAKER_NAME from cfg, else the macOS default."""
     if not cfg.deepgram_api_key:
         raise RuntimeError("DEEPGRAM_API_KEY is not set (laptop/.env)")
+    if input_device is None:
+        input_device = find_device(cfg.mic_name, "input")
+    if output_device is None:
+        output_device = find_device(cfg.speaker_name, "output")
+    logger.info(f"audio: mic {cfg.mic_name or 'default'!r} -> {input_device}, "
+                f"speaker {cfg.speaker_name or 'default'!r} -> {output_device}, "
+                f"echo gate {'on' if cfg.echo_gate else 'OFF'}")
     transport = LocalAudioTransport(LocalAudioTransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
         input_device_index=input_device, output_device_index=output_device))
+    gate = EchoGate(cfg.echo_tail_s, enabled=cfg.echo_gate)
     vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=cfg.vad_stop_secs)))
     stt = DeepgramSTTService(
         api_key=cfg.deepgram_api_key,
         # Boost every way the recipe objects get said, so "cilantro" isn't heard as "silent row".
         settings=DeepgramSTTService.Settings(keyterm=sorted(state.recipe.names()) + ["Remy", "hey Remy"]))
-    turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(stop=[
-        TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
+    turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(
+        start=[EchoGateStartStrategy(gate)],     # = Pipecat's VAD + transcription defaults when the gate is open
+        stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
             params=SmartTurnParams(stop_secs=cfg.turn_fallback_secs)))]))
-    proc = AgentProcessor(agent, frames, state, actions=actions)
+    proc = AgentProcessor(agent, frames, state, actions=actions, gate=gate)
     tts = DeepgramTTSService(api_key=cfg.deepgram_api_key,
                              settings=DeepgramTTSService.Settings(voice=cfg.tts_voice))
-    pipeline = Pipeline([transport.input(), vad, stt, turns, proc, tts, transport.output()])
+    stages = [transport.input(), vad, stt, turns, proc, tts]
+    if captions is not None:                  # dashboard captions in step with the voice
+        proc.captions = captions
+        stages.append(CaptionTap(captions))
+    pipeline = Pipeline(stages + [transport.output()])
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(audio_in_sample_rate=16000, audio_out_sample_rate=24000),
         idle_timeout_secs=None,   # the coach listens all session; never auto-cancel when quiet
         enable_rtvi=False,        # no web client
         # A dead STT/TTS (bad key, no network) would leave the coach silently deaf: stop instead.
-        # TODO(B5): switch to the offline fallback (macOS `say` + typed input) rather than exiting.
+        # (An offline fallback was cut, see docs/cut-list.md: if STT/TTS dies, the coach stops.)
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
     speech = Speech(proc, state)

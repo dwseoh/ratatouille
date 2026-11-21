@@ -232,9 +232,9 @@ class AimerAPI(Protocol):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Priority(enum.IntEnum):
-    PROACTIVE = 0               # check-ins: only when quiet; v1 rule = caller checks it's quiet
+    PROACTIVE = 0               # check-ins: held while the user talks / gets an answer, dropped after 3 s
     REPLY = 1                   # answers to the user
-    SAFETY = 2                  # reserved (priority rules come later, see cut-list.md)
+    SAFETY = 2                  # cuts the current audio and agent turn, spoken at once
 
 
 @runtime_checkable

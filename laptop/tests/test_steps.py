@@ -28,11 +28,11 @@ class Link(FakeLink):
         self.shown.append((line, text))
 
 
-def make(provider=None, step=0):
+def make(provider=None, step=0, pushback=True):
     st = State(RECIPE)
     st.step = step
     clk, link = Clock(), Link()
-    steps = Steps(st, link, provider, clock=clk)
+    steps = Steps(st, link, provider, clock=clk, pushback=pushback)
     changes = []
     steps.on_change(changes.append)
     return steps, st, clk, link, changes
@@ -188,3 +188,31 @@ def test_works_without_a_link():
     st = State(RECIPE)
     steps = Steps(st)
     assert steps.propose_done("user") == "advance" and st.step == 1
+
+
+# ───────────── default: trust the user (no camera veto) ─────────────
+
+def test_by_default_the_user_is_trusted_even_when_the_camera_disagrees():
+    verdict = StepVerdict(done=False, confidence=0.99, note="I only see a lobby")
+    steps, st, clk, link, changes = make(lambda step: verdict, pushback=False)
+    assert say_done(steps, clk) == "advance" and st.step == 1 and changes == [1]
+    assert steps.reason == ""
+    assert not any("watcher disagrees" in e.text for e in st.events)
+
+
+def test_default_steps_never_even_consult_the_watcher():
+    seen = []
+    steps, st, clk, *_ = make(lambda step: seen.append(step), pushback=False)
+    say_done(steps, clk, "user")
+    say_done(steps, clk, "llm")
+    assert seen == [] and st.step == 2
+
+
+def test_the_vision_nudge_still_only_asks_and_a_spoken_done_after_it_just_advances():
+    steps, st, clk, *_ = make(lambda step: StepVerdict(False, 0.9, "no"), pushback=False)
+    assert steps.propose_done("vision", "looks done") == "ask" and st.step == 0       # one nudge, never advances alone
+    assert say_done(steps, clk) == "advance" and st.step == 1
+
+
+def test_steps_default_to_trusting_the_user():
+    assert Steps(State(RECIPE)).pushback is False

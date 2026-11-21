@@ -68,11 +68,11 @@ speech runs over Bluetooth. Demo recipe: guacamole.
 
 | Fact | Consequence |
 |---|---|
-| OV2640, about 60-66° field of view, 2 MP. Bad in dim light. Steam fogs the lens. | Bring a lamp. Keep the lens away from the stove. Flat clear window, **not a dome** (a dome blurs). |
-| VGA, JPEG quality about 12, `fb_count 2`, `CAMERA_GRAB_LATEST`, WiFi sleep off → about 15-25 fps. | The laptop keeps only the newest frame. If it streams under ~5 fps, the closed loop gets sluggish. |
+| **OV3660**, 3 MP, stock lens (field of view about 66°; confirm during calibration). Bad in dim light. Steam fogs the lens. | Bring a lamp. Keep the lens away from the stove. Flat clear window, **not a dome** (a dome blurs). |
+| QVGA 320×240, 10 MHz XCLK, JPEG quality 12, `fb_count 1`, `CAMERA_GRAB_WHEN_EMPTY`, WiFi sleep off (Freenove's CameraWebServer settings). On this board 20 MHz + `fb_count 2` + `CAMERA_GRAB_LATEST` gave corrupted, banded frames. Stock example measured about 11 fps at QVGA and 12 fps at HVGA 480×320; VGA failed. | Below the 15 fps hoped for, above the 10 fps YOLO needs. The laptop keeps only the newest frame. If it streams under ~5 fps, the closed loop gets sluggish. Only **one client** can watch the stream at a time. |
 | The lens sits on top of the WROVER module, **about 34 mm up from the USB end**, about 3 mm toward the 5V pin row. It's mounted on a 21 mm, 24-pin, 0.5 mm-pitch ribbon held on with tape. | The lens is mid-board, not at the top. **Downward tilt (30-45°)** comes from peeling the camera up and angling it on a small wedge. The ribbon is fragile: no sharp folds. |
-| Chest height to counter is about 40-60 cm. | That's the calibration distance. A lime is about 40-50 px wide at VGA. |
-| Wide-angle (120-160°) OV2640 lenses exist. | Rejected: fisheye shrinks objects (worse YOLO), distorts the aim math and shrinks the dot. Optional spare: a stock-angle OV2640 with a **75 mm ribbon** (spare for a torn ribbon, and it lets the lens sit next to the pan-tilt at any angle). |
+| Chest height to counter is about 40-60 cm. | That's the calibration distance. A lime is about 20-25 px wide at QVGA (40-50 px at VGA). Calibrate at the resolution the firmware streams. |
+| Wide-angle (120-160°) camera modules exist for this 24-pin connector. | Rejected: fisheye shrinks objects (worse YOLO), distorts the aim math and shrinks the dot. Optional spare: a stock-angle OV3660 with a **75 mm ribbon** (spare for a torn ribbon, and it lets the lens sit next to the pan-tilt at any angle). |
 
 ### 4.4 Pan-tilt and laser
 

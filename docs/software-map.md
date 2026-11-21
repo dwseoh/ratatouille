@@ -73,7 +73,7 @@ Owner **A** = firmware + pointing. Owner **B** = voice + brain. Each part alread
 | 13 | **Recipe data + step state machine:** seeded with guacamole for v1 | `laptop/recipes/guacamole.json`, `laptop/coach/main.py` | Can talk through all 7 steps |
 | 14 | **Dashboard (web):** live feed with boxes and dot, current step, transcript, event log, latency bars | `laptop/coach/dashboard.py` | Judges can follow a full run on the screen |
 | 15 | **Latency telemetry:** timestamps at every stage, shown on the dashboard and the TFT | everywhere | Per-stage numbers for every turn |
-| 16 | **Fallbacks:** canned per-step lines if the API is slow or down; keyword pointing works offline | `laptop/coach/agent.py`, `main.py` | Demo still runs with the network off |
+| 16 | **Fallbacks:** canned per-step lines if the API is slow or down; keyword pointing still works | `laptop/coach/agent.py`, `main.py` | Slow or failing API never leaves the user in silence |
 
 ### Interfaces between A and B (agree once, then don't change)
 
@@ -92,11 +92,11 @@ Voice and vision both feed in, but **only the step state machine changes the ste
 
 - **You say "done"** → the watcher checks the last frames → advance, or push back once ("the pit's still in").
 - **Vision alone sees a step finished** → it *asks* ("looks mashed, ready for the lime?") and waits for a yes.
-- **Safety** (knife near fingers, burning) is the only thing that speaks up without being asked.
+- **Check-ins** (and the watcher's "ready for the next step?" question) are the only things that speak up without being asked. Safety warnings were cut: knife safety is in the step tips.
 
 ### Turn-taking: one speaker
 
-One speech channel. Priority: **safety > reply to you > proactive comment**.
+One speech channel. Priority: **reply to you > proactive comment** (a safety level exists in the contract but nothing uses it in v1).
 
 - **You talking always wins.** It cuts TTS mid-word (barge-in) and cancels any LLM request still running.
 - **Talking while it's thinking:** don't queue two answers. Cancel, merge the transcripts, send one request.
