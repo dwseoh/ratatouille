@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Callable
 
 from loguru import logger
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
@@ -56,8 +55,10 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from .intents import IntentActions
 from .contracts import (
     LAT_FIRST_AUDIO,
+    LAT_POINT,
     LAT_SPEECH_END,
     AgentAPI,
     FrameSource,
@@ -80,10 +81,10 @@ class AgentProcessor(FrameProcessor):
     """Sits after the turn detector, before TTS. One `agent.turn` per finished user turn."""
 
     def __init__(self, agent: AgentAPI, frames: FrameSource, state: State, *,
-                 on_interim: Callable[[str], None] | None = None, **kwargs):
+                 actions: IntentActions | None = None, **kwargs):
         super().__init__(**kwargs)
         self.agent, self.frames, self.state = agent, frames, state
-        self._on_interim = on_interim      # intent router (V4b) hooks in here
+        self.actions = actions             # intent router reflexes (point, stop, done, start over)
         self._text: list[str] = []         # final transcripts of the current user turn
         self._carry = ""                   # a turn cut off before it said anything
         self._speech_end: float | None = None
@@ -98,9 +99,9 @@ class AgentProcessor(FrameProcessor):
 
         # Transcripts are consumed here, never forwarded: TTS would read any TextFrame out loud.
         if isinstance(frame, InterimTranscriptionFrame):
-            st.transcript = frame.text
-            if self._on_interim and st.session == "active":
-                self._on_interim(frame.text)
+            st.transcript = " ".join(self._text + [frame.text])
+            if self.actions and st.session == "active":
+                await self.actions.on_interim(st.transcript)
             return
         if isinstance(frame, TranscriptionFrame):
             self._text.append(frame.text)
@@ -117,6 +118,8 @@ class AgentProcessor(FrameProcessor):
             self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self._cancel_turn("barge-in")        # Pipecat already cut the audio
+            if self.actions:
+                self.actions.new_utterance()
         elif isinstance(frame, UserStoppedSpeakingFrame):
             await self.queue_frame(_TurnEndFrame())      # runs after the queued transcripts
         elif isinstance(frame, BotStartedSpeakingFrame):
@@ -142,6 +145,14 @@ class AgentProcessor(FrameProcessor):
         self._lat = TurnLatency(turn_id=len(self.state.turns) + 1)
         self._lat.marks[LAT_SPEECH_END] = self._speech_end or time.monotonic()
         self.state.turns.append(self._lat)
+        if self.actions:
+            skip_agent = await self.actions.on_final(text)
+            point_t = self.actions.take_point_time()
+            if point_t is not None:     # usually before speech_end: the laser moved while you talked
+                self._lat.marks[LAT_POINT] = point_t
+            if skip_agent or self.state.session != "active":   # STOP / START_OVER
+                logger.info(f"user turn {self._lat.turn_id}: {text!r} handled locally, no agent turn")
+                return
         logger.info(f"user turn {self._lat.turn_id}: {text!r} "
                     f"(+{(time.monotonic() - self._lat.marks[LAT_SPEECH_END]) * 1000:.0f} ms after speech end)")
         self._task_text, self._task_spoke = text, False
@@ -198,7 +209,7 @@ class Speech:
 
 
 def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
-                   on_interim: Callable[[str], None] | None = None,
+                   actions: IntentActions | None = None,
                    input_device: int | None = None, output_device: int | None = None):
     """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py)."""
     if not cfg.deepgram_api_key:
@@ -214,7 +225,7 @@ def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
     turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(stop=[
         TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
             params=SmartTurnParams(stop_secs=cfg.turn_fallback_secs)))]))
-    proc = AgentProcessor(agent, frames, state, on_interim=on_interim)
+    proc = AgentProcessor(agent, frames, state, actions=actions)
     tts = DeepgramTTSService(api_key=cfg.deepgram_api_key,
                              settings=DeepgramTTSService.Settings(voice=cfg.tts_voice))
     pipeline = Pipeline([transport.input(), vad, stt, turns, proc, tts, transport.output()])
@@ -227,4 +238,7 @@ def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
         # TODO(B5): switch to the offline fallback (macOS `say` + typed input) rather than exiting.
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
-    return worker, Speech(proc, state)
+    speech = Speech(proc, state)
+    if actions:
+        actions.speech = speech        # STOP intent -> speech.stop()
+    return worker, speech
