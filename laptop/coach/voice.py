@@ -25,8 +25,8 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Callable
 
+import numpy as np
 from loguru import logger
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -38,6 +38,7 @@ from pipecat.frames.frames import (
     DataFrame,
     Frame,
     InterimTranscriptionFrame,
+    OutputAudioRawFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     UserStartedSpeakingFrame,
@@ -56,8 +57,10 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from .intents import IntentActions
 from .contracts import (
     LAT_FIRST_AUDIO,
+    LAT_POINT,
     LAT_SPEECH_END,
     AgentAPI,
     FrameSource,
@@ -67,6 +70,19 @@ from .contracts import (
 )
 
 FRAMES_PER_TURN = 3
+CHIME_RATE = 24000      # = PipelineParams.audio_out_sample_rate
+
+
+def _chime_frame(kind: str) -> OutputAudioRawFrame:
+    """Two soft notes, ~0.25 s. Rising = session starting, falling = reset."""
+    notes = (660.0, 990.0) if kind == "start" else (660.0, 440.0)
+    parts = []
+    for f in notes:
+        t = np.arange(int(CHIME_RATE * 0.12)) / CHIME_RATE
+        env = np.minimum(1.0, np.minimum(t / 0.01, (t[-1] - t) / 0.04))   # 10 ms attack, 40 ms release
+        parts.append(0.3 * env * np.sin(2 * np.pi * f * t))
+    pcm = (np.concatenate(parts) * 32767).astype(np.int16).tobytes()
+    return OutputAudioRawFrame(audio=pcm, sample_rate=CHIME_RATE, num_channels=1)
 
 
 @dataclass
@@ -80,10 +96,12 @@ class AgentProcessor(FrameProcessor):
     """Sits after the turn detector, before TTS. One `agent.turn` per finished user turn."""
 
     def __init__(self, agent: AgentAPI, frames: FrameSource, state: State, *,
-                 on_interim: Callable[[str], None] | None = None, **kwargs):
+                 actions: IntentActions | None = None, **kwargs):
         super().__init__(**kwargs)
         self.agent, self.frames, self.state = agent, frames, state
-        self._on_interim = on_interim      # intent router (V4b) hooks in here
+        self.actions = actions             # intent router reflexes (point, stop, done, start over)
+        self.session = None                # Session attaches itself: wake phrase while idle
+        self._woke = False                 # this utterance contained the wake phrase
         self._text: list[str] = []         # final transcripts of the current user turn
         self._carry = ""                   # a turn cut off before it said anything
         self._speech_end: float | None = None
@@ -98,9 +116,12 @@ class AgentProcessor(FrameProcessor):
 
         # Transcripts are consumed here, never forwarded: TTS would read any TextFrame out loud.
         if isinstance(frame, InterimTranscriptionFrame):
-            st.transcript = frame.text
-            if self._on_interim and st.session == "active":
-                self._on_interim(frame.text)
+            st.transcript = " ".join(self._text + [frame.text])
+            if st.session != "active":
+                if self.session and not self._woke and await self.session.heard(st.transcript):
+                    self._woke = True          # chime plays now; the greeting turn runs at utterance end
+            elif self.actions:
+                await self.actions.on_interim(st.transcript)
             return
         if isinstance(frame, TranscriptionFrame):
             self._text.append(frame.text)
@@ -117,6 +138,9 @@ class AgentProcessor(FrameProcessor):
             self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self._cancel_turn("barge-in")        # Pipecat already cut the audio
+            self._woke = False
+            if self.actions:
+                self.actions.new_utterance()
         elif isinstance(frame, UserStoppedSpeakingFrame):
             await self.queue_frame(_TurnEndFrame())      # runs after the queued transcripts
         elif isinstance(frame, BotStartedSpeakingFrame):
@@ -134,18 +158,44 @@ class AgentProcessor(FrameProcessor):
     async def _start_turn(self):
         text = " ".join(t for t in self._text if t).strip()
         self._text.clear()
-        if not text or self.state.session != "active":     # idle: speech is ignored
+        if not text:
             return
-        if self._carry:
+        if self.state.session != "active":     # idle: only the wake phrase counts
+            if not (self.session and not self._woke and await self.session.heard(text)):
+                return
+            self._woke = True
+        user_text = text
+        if self._woke:                         # "hey Remy, ..." -> one greeting turn (+ whatever else was said)
+            self._woke, self._carry = False, ""
+            text = self.session.first_turn(text)
+        elif self._carry:
             text, self._carry = f"{self._carry} {text}", ""
-        self.state.transcript = text
+            user_text = text
+        self.state.transcript = user_text
         self._lat = TurnLatency(turn_id=len(self.state.turns) + 1)
         self._lat.marks[LAT_SPEECH_END] = self._speech_end or time.monotonic()
         self.state.turns.append(self._lat)
+        if self.actions:
+            skip_agent = await self.actions.on_final(user_text)
+            point_t = self.actions.take_point_time()
+            if point_t is not None:     # usually before speech_end: the laser moved while you talked
+                self._lat.marks[LAT_POINT] = point_t
+            if skip_agent or self.state.session != "active":   # STOP / START_OVER
+                logger.info(f"user turn {self._lat.turn_id}: {text!r} handled locally, no agent turn")
+                return
         logger.info(f"user turn {self._lat.turn_id}: {text!r} "
                     f"(+{(time.monotonic() - self._lat.marks[LAT_SPEECH_END]) * 1000:.0f} ms after speech end)")
-        self._task_text, self._task_spoke = text, False
+        self._launch(text)
+
+    def _launch(self, text: str, *, carry: bool = True):
+        self._task_text, self._task_spoke = (text if carry else ""), False
         self._task = self.create_task(self._run_turn(text), "agent_turn")
+
+    async def agent_turn(self, text: str) -> None:
+        """Start an agent turn the user didn't trigger (session greeting, check-ins). Returns at once.
+        Cancelled by barge-in like any other turn, but never merged into the user's next turn."""
+        await self._cancel_turn("new agent turn")
+        self._launch(text, carry=False)
 
     async def _run_turn(self, text: str):
         try:
@@ -159,7 +209,7 @@ class AgentProcessor(FrameProcessor):
     async def _cancel_turn(self, why: str):
         if self._task is None or self._task.done():
             return
-        if not self._task_spoke:              # still thinking: answer both utterances in one turn
+        if not self._task_spoke and self._task_text:   # still thinking: answer both utterances in one turn
             self._carry = self._task_text
         logger.info(f"{why}: cancelling agent turn")
         self.agent.cancel()
@@ -177,6 +227,10 @@ class AgentProcessor(FrameProcessor):
     async def stop(self) -> None:
         await self._cancel_turn("stop")
         await self.broadcast_interruption()   # cuts TTS + queued audio
+
+    async def chime(self, kind: str) -> None:
+        """Play a short local tone: "start" (rising) or "reset" (falling). No network, plays at once."""
+        await self.push_frame(_chime_frame(kind))
 
 
 class Speech:
@@ -196,9 +250,25 @@ class Speech:
     def stop(self) -> None:
         self._proc.create_task(self._proc.stop(), "speech_stop")
 
+    async def interrupt(self) -> None:
+        """Like stop(), but returns once the audio is cut (so a chime pushed next isn't cut too)."""
+        await self._proc.stop()
+
+    async def chime(self, kind: str) -> None:
+        await self._proc.chime(kind)
+
+    def attach_session(self, session) -> None:
+        """Session hooks the pipeline: heard(text) -> bool while idle, first_turn(text) -> agent text."""
+        self._proc.session = session
+
+    async def agent_turn(self, text: str) -> None:
+        """Not in SpeechAPI: run an agent turn without user speech (Session greeting, check-ins).
+        Returns once started; the sentences are spoken as they stream in."""
+        await self._proc.agent_turn(text)
+
 
 def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
-                   on_interim: Callable[[str], None] | None = None,
+                   actions: IntentActions | None = None,
                    input_device: int | None = None, output_device: int | None = None):
     """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py)."""
     if not cfg.deepgram_api_key:
@@ -210,11 +280,11 @@ def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
     stt = DeepgramSTTService(
         api_key=cfg.deepgram_api_key,
         # Boost every way the recipe objects get said, so "cilantro" isn't heard as "silent row".
-        settings=DeepgramSTTService.Settings(keyterm=sorted(state.recipe.names())))
+        settings=DeepgramSTTService.Settings(keyterm=sorted(state.recipe.names()) + ["Remy", "hey Remy"]))
     turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(stop=[
         TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
             params=SmartTurnParams(stop_secs=cfg.turn_fallback_secs)))]))
-    proc = AgentProcessor(agent, frames, state, on_interim=on_interim)
+    proc = AgentProcessor(agent, frames, state, actions=actions)
     tts = DeepgramTTSService(api_key=cfg.deepgram_api_key,
                              settings=DeepgramTTSService.Settings(voice=cfg.tts_voice))
     pipeline = Pipeline([transport.input(), vad, stt, turns, proc, tts, transport.output()])
@@ -227,4 +297,7 @@ def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
         # TODO(B5): switch to the offline fallback (macOS `say` + typed input) rather than exiting.
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
-    return worker, Speech(proc, state)
+    speech = Speech(proc, state)
+    if actions:
+        actions.speech = speech        # STOP intent -> speech.stop()
+    return worker, speech

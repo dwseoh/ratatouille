@@ -9,3 +9,6 @@ uvicorn
 pipecat-ai[deepgram,silero,local]==1.16.0  # needs `brew install portaudio`; use Python 3.12 (3.14 untested)
 pytest
 pytest-timeout
+google-genai
+rapidfuzz==3.14.6
+sentence-transformers==6.3.0  # intent router embeddings (all-MiniLM-L6-v2, ~80 MB download on first run)

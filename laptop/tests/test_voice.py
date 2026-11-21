@@ -6,6 +6,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     InterimTranscriptionFrame,
     InterruptionFrame,
+    OutputAudioRawFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     UserStartedSpeakingFrame,
@@ -16,7 +17,9 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import SleepFrame, run_test
 
-from coach.contracts import LAT_FIRST_AUDIO, LAT_SPEECH_END, FakeAgent, FakeFrames, Recipe, SpeechAPI, State
+from coach.contracts import (LAT_FIRST_AUDIO, LAT_SPEECH_END, FakeAgent, FakeAimer, FakeFrames, FakeSteps, Recipe,
+                             SpeechAPI, State)
+from coach.session import START_TEXT, Session
 from coach.voice import AgentProcessor, Speech
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
@@ -83,6 +86,19 @@ def test_idle_session_ignores_speech():
     assert agent.texts == [] and spoken(down) == [] and state.turns == []
 
 
+def test_wake_phrase_chimes_then_one_greeting_turn():
+    proc, agent, state = setup(session="idle")
+    Session(state, Speech(proc, state), agent, FakeAimer(state), FakeSteps(state))
+    down = run(proc, user_says("hello there") + [SleepFrame(sleep=0.1)]          # ignored: no wake phrase
+               + [VADUserStartedSpeakingFrame(), UserStartedSpeakingFrame(),
+                  InterimTranscriptionFrame("hey Remy let's", "user", ""), final("hey Remy, let's make guac"),
+                  VADUserStoppedSpeakingFrame(stop_secs=0.2), UserStoppedSpeakingFrame(), SleepFrame(sleep=0.6)])
+    assert state.session == "active"
+    assert sum(isinstance(f, OutputAudioRawFrame) for f in down) >= 1            # start chime
+    assert agent.texts == [f"{START_TEXT}\nUser: let's make guac"]
+    assert state.transcript == "hey Remy, let's make guac"
+
+
 def test_barge_in_while_thinking_cancels_and_merges():
     proc, agent, _ = setup(SpyAgent(delay=1.0))
     run(proc, user_says("where's the") + [SleepFrame(sleep=0.1)] + user_says("lime") + [SleepFrame(sleep=0.1)])
@@ -111,6 +127,25 @@ def test_first_audio_is_marked_on_the_turn():
     run(proc, user_says("hi") + [SleepFrame(sleep=0.5), BotStartedSpeakingFrame(), SleepFrame(sleep=0.05)])
     assert LAT_FIRST_AUDIO in state.turns[0].marks
     assert state.turns[0].ms()[LAT_FIRST_AUDIO] >= 0
+
+
+def test_agent_turn_speaks_and_is_not_merged_on_barge_in():
+    proc, agent, state = setup(SpyAgent(delay=1.0))
+    speech = Speech(proc, state)
+
+    async def go():
+        async def kick():
+            await asyncio.sleep(0.05)
+            await speech.agent_turn("[session start]")
+        k = asyncio.create_task(kick())
+        down, _ = await run_test(proc, frames_to_send=[SleepFrame(sleep=0.2)] + user_says("hi")
+                                 + [SleepFrame(sleep=1.6)])
+        await k
+        return down
+
+    down = asyncio.run(go())
+    assert agent.texts == ["[session start]", "hi"]       # greeting cut by barge-in, NOT merged into "hi"
+    assert spoken(down) == ["You said: hi.", "I can see 3 frames."]
 
 
 def test_speech_say_and_stop():
