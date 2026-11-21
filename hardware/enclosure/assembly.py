@@ -68,7 +68,7 @@ box(cam_c - 9, cam_c + 9, y_mf, y_pf, z0 + 32, z0 + 57, SILVER)       # WROVER s
 box(cam_c - 9, cam_c + 9, y_mf, y_pf, z0 + 57, z0 + 63.5, "#2d2d5a")  # antenna overhang
 box(cam_c - 4.5, cam_c + 4.5, y_mf, y_pf, z0 - 0.5, z0 + 7, SILVER)   # USB-C
 lens_x, lens_z = cam_c + g("cam_lens_dx"), W + g("lens_z")
-box(lens_x - 4.25, lens_x + 4.25, y_mf - 5, y_mf, lens_z - 4.25, lens_z + 4.25, BLACK)  # OV2640
+box(lens_x - 4.25, lens_x + 4.25, y_mf - 5, y_mf, lens_z - 4.25, lens_z + 4.25, BLACK)  # OV3660
 cyl("y", lens_x, lens_z, 3, y_mf - 7.5, y_mf - 5, "#444444")                       # lens barrel
 box(lens_x - 4, lens_x + 4, y_mf - 0.3, y_mf, lens_z - 14, lens_z - 4.25, ORANGE)    # ribbon
 # ESP32-S3 board: 28 x 64, two USB-C at the bottom

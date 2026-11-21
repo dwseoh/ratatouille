@@ -27,7 +27,7 @@
 const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 
 // ---------- camera settings ----------
-// This board's sensor is an OV3660 (not the OV2640 the docs assume).
+// This board's sensor is an OV3660 (docs/constraints.md 4.3).
 // Settings = Freenove's Sketch_06.1_CameraWebServer, which streams cleanly on this board. With 20 MHz /
 // 2 buffers / GRAB_LATEST the old sketch got corrupted, banded JPEGs and 3-4 s per frame.
 // Change ONE thing at a time from here, and keep a setting only if the [stream] line stays healthy.
