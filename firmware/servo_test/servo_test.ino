@@ -22,12 +22,13 @@
 //   u / d    tilt up / down by 1 deg (to creep up to horizontal)
 //   s        slow sweep test of both servos, then back to centre
 //   l        laser on/off
+//   b        laser blink on/off (500 ms on / 500 ms off)
 //   r        repeat: sweep over and over (1 s pause between) until you press r again
 //   ?        print the current angles
 // The laser starts OFF. Point the pan-tilt at a wall and keep faces out of the way.
 //
 // NO-LAPTOP MODE: if nothing is typed within 3 s of power-up (AUTO_START_MS), it sweeps forever on its own,
-// with the laser ON (AUTO_LASER). Point it at a wall.
+// with the laser BLINKING (AUTO_LASER). Point it at a wall.
 // Use it to run the ESP from the power bank too (bank 5 V -> ESP 5V pin, USB unplugged):
 // the ESP's own current keeps the bank from switching itself off.
 
@@ -45,15 +46,33 @@ const int PIN_PAN = 4, PIN_TILT = 5, PIN_LASER = 6;
 const int PAN_MIN = 10, PAN_MAX = 170;
 const int TILT_MIN = 0, TILT_MAX = 180;  // full range here, to find the limits. control_s3.ino clamps it.
 const bool AUTO_LASER = true;            // laser on during the no-laptop auto sweep
-const int STEP_MS = 12;
-const uint32_t AUTO_START_MS = 3000;   // no-laptop mode starts this long after boot if nothing is typed                  // slew speed: 1 deg every 12 ms (smooth, gentle on the power)
+const int STEP_MS = 12;                  // slew speed: 1 deg every 12 ms (smooth, gentle on the power)
+const uint32_t AUTO_START_MS = 3000;     // no-laptop mode starts this long after boot if nothing is typed
+const uint32_t BLINK_MS = 500;           // laser blink period half (on 500 ms, off 500 ms) in auto mode / 'b'
 
 LedcServo pan, tilt;
 void slew(LedcServo &s, int &cur, int target);  // explicit prototype (keeps the Arduino IDE from guessing one above the struct)
 int panDeg = 90, tiltDeg = 90;
 bool laserOn = false;
 bool repeatSweep = false;  // 'r' command
+bool blinkLaser = false;   // auto mode or 'b' command: laser toggles every BLINK_MS while running
+uint32_t lastBlink = 0;
 bool gotCmd = false;  // stays false until something is typed -> auto-sweep mode
+
+void setLaser(bool on) { laserOn = on; digitalWrite(PIN_LASER, on ? HIGH : LOW); }
+
+// Called every servo step and while idling, so the laser blinks even during a sweep.
+void laserTick() {
+  if (!blinkLaser) return;
+  uint32_t now = millis();
+  if (now - lastBlink >= BLINK_MS) { lastBlink = now; setLaser(!laserOn); }
+}
+
+// delay() that keeps the laser blinking.
+void waitMs(uint32_t ms) {
+  uint32_t t0 = millis();
+  while (millis() - t0 < ms) { laserTick(); delay(5); }
+}
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -62,6 +81,7 @@ void slew(LedcServo &s, int &cur, int target) {
   while (cur != target) {
     cur += (target > cur) ? 1 : -1;
     s.write(cur);
+    laserTick();
     delay(STEP_MS);
   }
 }
@@ -73,6 +93,7 @@ void slewBoth(int panT, int tiltT) {
     if (tiltDeg != tiltT) tiltDeg += (tiltT > tiltDeg) ? 1 : -1;
     pan.write(panDeg);
     tilt.write(tiltDeg);
+    laserTick();
     delay(STEP_MS);
   }
 }
@@ -106,17 +127,19 @@ void setup() {
   tilt.attach(PIN_TILT);
   pan.write(panDeg);
   tilt.write(tiltDeg);
-  Serial.println("\nservo_test ready. Both servos at 90. Commands: c, p <deg>, t <deg>, u, d, s, r, l, ?");
+  Serial.println("\nservo_test ready. Both servos at 90. Commands: c, p <deg>, t <deg>, u, d, s, r, l, b, ?");
 }
 
 void loop() {
   if (!Serial.available()) {
     if (!gotCmd && millis() > AUTO_START_MS) {  // no-laptop mode
-      if (AUTO_LASER && !laserOn) { laserOn = true; digitalWrite(PIN_LASER, HIGH); }
-      sweep(); delay(1000);
-    } else if (repeatSweep) { sweep(); delay(1000); }
+      if (AUTO_LASER && !blinkLaser) { blinkLaser = true; Serial.println("auto mode: sweep + laser blink"); }
+      sweep(); waitMs(1000);
+    } else if (repeatSweep) { sweep(); waitMs(1000); }
+    else laserTick();
     return;
   }
+  if (!gotCmd && blinkLaser) { blinkLaser = false; setLaser(false); }  // typing stops auto mode
   gotCmd = true;
   String line = Serial.readStringUntil('\n');
   line.trim();
@@ -132,9 +155,11 @@ void loop() {
     case 'd': slew(tilt, tiltDeg, clampi(tiltDeg - 1, TILT_MIN, TILT_MAX)); break;
     case 's': sweep(); break;
     case 'r': repeatSweep = !repeatSweep; Serial.println(repeatSweep ? "repeat ON (r to stop)" : "repeat off"); break;
-    case 'l': laserOn = !laserOn; digitalWrite(PIN_LASER, laserOn ? HIGH : LOW); break;
+    case 'l': blinkLaser = false; setLaser(!laserOn); break;
+    case 'b': blinkLaser = !blinkLaser; if (!blinkLaser) setLaser(false);
+              Serial.println(blinkLaser ? "blink ON (b to stop)" : "blink off"); break;
     case '?': break;
-    default: Serial.println("commands: c, p <deg>, t <deg>, u, d, s, r, l, ?"); return;
+    default: Serial.println("commands: c, p <deg>, t <deg>, u, d, s, r, l, b, ?"); return;
   }
   report();
 }
