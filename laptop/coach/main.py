@@ -12,7 +12,7 @@
 
 Who does what at runtime:
     FrameGrabber (A, thread)  -> frames for YOLO, the agent and calibration
-    detect_loop  (B's Detector in a worker thread) -> State.dets
+    DetectorThread (B, thread) -> YOLO on the newest frame, 2-of-3 smoothing -> State.dets
     Aimer.run    (A, 30 Hz)   -> State.dets + calibration -> link.pan/tilt/laser
     ControlLink  (A, 30 Hz)   -> UDP to the S3
     voice        (B, Pipecat) -> intents (fast point/done/stop) + agent turns (C) -> TTS
@@ -20,7 +20,7 @@ Who does what at runtime:
     CheckIns     (C)          -> the coach speaks up on its own: step intros + a comment after a quiet spell
     Dashboard    (C)          -> http://<laptop>:8000: live feed, step, captions, event log, latency (judges)
     Session      (B)          -> "hey Remy" starts, "start over" resets
-Nothing here blocks the event loop: YOLO runs in an executor, frames in their own thread.
+Nothing here blocks the event loop: YOLO and frames each run in their own thread.
 """
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ import argparse
 import asyncio
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .aim import Aimer, Calibration
 from .config import CONFIG as cfg
+from .telemetry import LatencyLog
 from .contracts import (
     LAT_FIRST_AUDIO,
     TFT_LATENCY,
@@ -95,27 +95,6 @@ def make_frames(args):
 
 
 # ───────────────────────── loops ─────────────────────────
-
-async def detect_loop(frames, state: State, detector) -> None:
-    """B's YOLO, one frame at a time in a worker thread. Only writes State.dets (from the loop)."""
-    loop = asyncio.get_running_loop()
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yolo")
-    last_t, fails = 0.0, 0
-    while True:
-        frame, t = frames.latest()
-        if frame is None or t == last_t:
-            await asyncio.sleep(0.01)
-            continue
-        last_t = t
-        try:
-            state.dets = await loop.run_in_executor(pool, detector.detect, frame)
-            fails = 0
-        except Exception:
-            fails += 1
-            if fails in (1, 10, 100):
-                log.exception("detector failed (%d in a row)", fails)
-            await asyncio.sleep(0.2)
-
 
 async def tft_latency_loop(state: State, link) -> None:
     """TFT line 3: speech end -> first audio of the last finished turn."""
@@ -195,6 +174,8 @@ class App:
         self.speech = None
         self.session = None
         self.checkins = None
+        self.detector = None          # vision.DetectorThread when YOLO is on
+        self.latency_log = LatencyLog(state, meta={"model": cfg.model, "fast": cfg.fast})   # logs/latency.jsonl
         self._tasks: list[asyncio.Task] = []
 
     @classmethod
@@ -220,9 +201,9 @@ class App:
             self.state.dets = fake_dets(tuple(self.state.recipe.objects[:8]))
             log.info("fake detections: %s", ", ".join(sorted(self.state.visible())))
             return
-        from .vision import Detector   # ultralytics, heavy
-        detector = Detector(cfg.yolo_weights, cfg.yolo_device, self.state.recipe.objects)
-        self._spawn(detect_loop(self.frames, self.state, detector), "yolo")
+        from .vision import Detector, DetectorThread   # ultralytics, heavy
+        detector = Detector(cfg.yolo_weights, cfg.yolo_device, self.state.recipe.objects, imgsz=cfg.yolo_imgsz)
+        self.detector = DetectorThread(detector, self.frames, self.state, asyncio.get_running_loop()).start()
 
     def _start_watcher(self) -> None:
         """C's watcher (loop 3): event log and "step done?" asks. Needs the voice pipeline."""
@@ -274,6 +255,7 @@ class App:
     async def run(self, lines=None) -> None:
         self._spawn(self.aimer.run(), "aimer")
         self._spawn(tft_latency_loop(self.state, self.link), "tft-latency")
+        self._spawn(self.latency_log.run(), "latency-log")
         self._spawn(health_loop(self.frames, self.link, self.calib), "health")
         self._start_detection()
         self._start_dashboard()
@@ -318,6 +300,9 @@ class App:
         """Laser off and servos centred before exiting, whatever happened."""
         self.aimer.laser_off()
         self.link.reset()
+        self.latency_log.flush()
+        if self.detector is not None:
+            self.detector.stop()
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

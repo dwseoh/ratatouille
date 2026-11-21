@@ -104,9 +104,14 @@ def test_unknown_and_invisible_objects():
 
 
 @pytest.mark.timeout(10)
-def test_detect_loop_writes_dets_without_blocking():
-    class Frames:
+def test_yolo_runs_in_detector_thread_with_smoothing(monkeypatch):
+    """Without --no-yolo the app runs B's DetectorThread (2-of-3 smoothing, imgsz from cfg), the loop stays
+    responsive while YOLO blocks, and shutdown stops the thread."""
+    import coach.vision as vision
+
+    class Frames(FakeFrames):
         def __init__(self):
+            super().__init__()
             self.n = 0
 
         def latest(self):
@@ -114,30 +119,38 @@ def test_detect_loop_writes_dets_without_blocking():
             return np.zeros((48, 64, 3), np.uint8), time.time() + self.n   # always a "new" frame
 
     class SlowDetector:
-        calls = 0
+        calls, imgsz = 0, None
+
+        def __init__(self, weights, device, classes, *, imgsz=640, conf=None):
+            SlowDetector.imgsz = imgsz
 
         def detect(self, frame):
             SlowDetector.calls += 1
             time.sleep(0.05)                          # blocking, like YOLO: must run off the loop
-            return [Det("lime", 0.9, (10, 10, 20, 20))]
+            # the lime every frame; a one-frame "bowl" false hit that smoothing must drop
+            return [Det("lime", 0.9, (10, 10, 20, 20))] + ([Det("bowl", 0.9, (0, 0, 5, 5))] if SlowDetector.calls == 1 else [])
+
+    monkeypatch.setattr(vision, "Detector", SlowDetector)
 
     async def go():
-        from coach.contracts import Recipe
-        st = State(Recipe.load(app_main.LAPTOP / "recipes" / "guacamole.json"))
-        task = asyncio.create_task(app_main.detect_loop(Frames(), st, SlowDetector()))
-        ticks = 0
-        t0 = time.monotonic()
+        a = app_main.parse_args(["--type", "--no-s3", "--fake-agent", "--cam", "black"])
+        app = await app_main.App.create(a, frames=Frames(), link=RecLink(), calib=linear_calib(), agent=FakeAgent())
+        app._start_detection()
+        ticks, t0 = 0, time.monotonic()
         while time.monotonic() - t0 < 0.5:           # the loop keeps ticking while YOLO "runs"
             await asyncio.sleep(0.01)
             ticks += 1
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        return st, ticks
+        visible = app.state.visible()
+        th = app.detector
+        await app.shutdown()
+        return visible, ticks, th
 
-    st, ticks = asyncio.run(go())
-    assert st.visible() == {"lime"}
-    assert SlowDetector.calls >= 3
+    visible, ticks, th = asyncio.run(go())
+    assert isinstance(th, vision.DetectorThread)
+    assert visible == {"lime"}                        # bowl seen once: not visible
+    assert SlowDetector.calls >= 3 and SlowDetector.imgsz == app_main.cfg.yolo_imgsz
     assert ticks > 20
+    assert not th._thread.is_alive()
 
 
 @pytest.mark.timeout(10)

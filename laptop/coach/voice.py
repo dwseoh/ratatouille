@@ -15,10 +15,17 @@ Barge-in: when a user turn starts, `UserTurnProcessor` cuts the coach's audio (I
 `AgentProcessor` cancels the running agent turn (`agent.cancel()` + the task). If the cut-off turn
 hadn't said anything yet, its text is merged into the next turn instead of being answered twice.
 
+Echo gate (echo.py, ECHO_GATE=1 by default): while the coach is audible, the mic hears it, so only a stop
+word starts a user turn (and cuts the audio); everything else heard then is dropped. With headphones,
+ECHO_GATE=0 brings back barge-in by any speech.
+
+Devices: MIC_NAME / SPEAKER_NAME (.env) pick the mic and speaker by name substring, never "default"
+(macOS switches the default whenever something connects). `python -m tools.try_voice --devices` lists them.
+
 State fields written here (contracts.State, B is the only writer):
   transcript, user_talking, speaking, last_activity, turns (one TurnLatency per user turn).
 
-Try it:  cd laptop && python -m tools.try_voice     (headphones until the echo gate exists)
+Try it:  cd laptop && python -m tools.try_voice
 """
 from __future__ import annotations
 
@@ -57,6 +64,7 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from .echo import EchoGate, EchoGateStartStrategy
 from .intents import IntentActions
 from .contracts import (
     LAT_FIRST_AUDIO,
@@ -96,9 +104,11 @@ class AgentProcessor(FrameProcessor):
     """Sits after the turn detector, before TTS. One `agent.turn` per finished user turn."""
 
     def __init__(self, agent: AgentAPI, frames: FrameSource, state: State, *,
-                 actions: IntentActions | None = None, **kwargs):
+                 actions: IntentActions | None = None, gate: EchoGate | None = None, **kwargs):
         super().__init__(**kwargs)
         self.agent, self.frames, self.state = agent, frames, state
+        self.gate = gate or EchoGate(enabled=False)   # shared with EchoGateStartStrategy
+        self._stop_turn = False            # this user turn began over the coach: it's a stop word
         self.actions = actions             # intent router reflexes (point, stop, done, start over)
         self.session = None                # Session attaches itself: wake phrase while idle
         self._woke = False                 # this utterance contained the wake phrase
@@ -113,8 +123,13 @@ class AgentProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         st = self.state
+        self.gate.update(frame)
 
         # Transcripts are consumed here, never forwarded: TTS would read any TextFrame out loud.
+        if isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame)) and (
+                self.gate.suppressing or self._stop_turn):
+            logger.debug(f"echo gate: dropped {frame.text!r}")   # the coach's own voice (or a stop word)
+            return
         if isinstance(frame, InterimTranscriptionFrame):
             st.transcript = " ".join(self._text + [frame.text])
             if st.session != "active":
@@ -132,12 +147,15 @@ class AgentProcessor(FrameProcessor):
             return
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
-            st.user_talking, st.last_activity = True, time.monotonic()
+            if not self.gate.suppressing:                 # else probably the coach in the mic
+                st.user_talking, st.last_activity = True, time.monotonic()
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             st.user_talking, st.last_activity = False, time.monotonic()
             self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
         elif isinstance(frame, UserStartedSpeakingFrame):
-            await self._cancel_turn("barge-in")        # Pipecat already cut the audio
+            self._stop_turn = self.gate.suppressing      # only a stop word starts a turn over the coach
+            st.user_talking, st.last_activity = True, time.monotonic()
+            await self._cancel_turn("stop word" if self._stop_turn else "barge-in")   # audio already cut
             self._woke = False
             if self.actions:
                 self.actions.new_utterance()
@@ -158,6 +176,10 @@ class AgentProcessor(FrameProcessor):
     async def _start_turn(self):
         text = " ".join(t for t in self._text if t).strip()
         self._text.clear()
+        if self._stop_turn:                    # audio cut + agent cancelled at turn start; nothing to answer
+            self._stop_turn = False
+            logger.info("stop word over the coach: stopped, no agent turn")
+            return
         if not text:
             return
         if self.state.session != "active":     # idle: only the wake phrase counts
@@ -269,24 +291,59 @@ class Speech:
         await self._proc.agent_turn(text)
 
 
+def list_devices() -> list[dict]:
+    """PortAudio devices as PyAudio numbers them (LocalAudioTransport wants PyAudio indexes)."""
+    import pyaudio
+    pa = pyaudio.PyAudio()
+    try:
+        return [pa.get_device_info_by_index(i) for i in range(pa.get_device_count())]
+    finally:
+        pa.terminate()
+
+
+def find_device(name: str, kind: str, devices: list[dict] | None = None) -> int | None:
+    """Index of the first `kind` ("input" / "output") device whose name contains `name` (any case).
+    Empty name -> None (the macOS default). No match -> RuntimeError listing what exists."""
+    if not name:
+        return None
+    devices = devices if devices is not None else list_devices()
+    key = "maxInputChannels" if kind == "input" else "maxOutputChannels"
+    usable = [d for d in devices if d.get(key, 0) > 0]
+    for d in usable:
+        if name.lower() in d["name"].lower():
+            return int(d["index"])
+    names = ", ".join(repr(d["name"]) for d in usable) or "none"
+    raise RuntimeError(f"no {kind} device matching {name!r}. {kind} devices: {names}")
+
+
 def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
                    actions: IntentActions | None = None,
                    input_device: int | None = None, output_device: int | None = None):
-    """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py)."""
+    """Return (worker, speech). Run the worker with a WorkerRunner (see tools/try_voice.py).
+    Devices: explicit indexes win, else MIC_NAME / SPEAKER_NAME from cfg, else the macOS default."""
     if not cfg.deepgram_api_key:
         raise RuntimeError("DEEPGRAM_API_KEY is not set (laptop/.env)")
+    if input_device is None:
+        input_device = find_device(cfg.mic_name, "input")
+    if output_device is None:
+        output_device = find_device(cfg.speaker_name, "output")
+    logger.info(f"audio: mic {cfg.mic_name or 'default'!r} -> {input_device}, "
+                f"speaker {cfg.speaker_name or 'default'!r} -> {output_device}, "
+                f"echo gate {'on' if cfg.echo_gate else 'OFF'}")
     transport = LocalAudioTransport(LocalAudioTransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
         input_device_index=input_device, output_device_index=output_device))
+    gate = EchoGate(cfg.echo_tail_s, enabled=cfg.echo_gate)
     vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=cfg.vad_stop_secs)))
     stt = DeepgramSTTService(
         api_key=cfg.deepgram_api_key,
         # Boost every way the recipe objects get said, so "cilantro" isn't heard as "silent row".
         settings=DeepgramSTTService.Settings(keyterm=sorted(state.recipe.names()) + ["Remy", "hey Remy"]))
-    turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(stop=[
-        TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
+    turns = UserTurnProcessor(user_turn_strategies=UserTurnStrategies(
+        start=[EchoGateStartStrategy(gate)],     # = Pipecat's VAD + transcription defaults when the gate is open
+        stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
             params=SmartTurnParams(stop_secs=cfg.turn_fallback_secs)))]))
-    proc = AgentProcessor(agent, frames, state, actions=actions)
+    proc = AgentProcessor(agent, frames, state, actions=actions, gate=gate)
     tts = DeepgramTTSService(api_key=cfg.deepgram_api_key,
                              settings=DeepgramTTSService.Settings(voice=cfg.tts_voice))
     pipeline = Pipeline([transport.input(), vad, stt, turns, proc, tts, transport.output()])

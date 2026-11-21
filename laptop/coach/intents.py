@@ -90,6 +90,18 @@ def _has(t: str, phrase: str) -> bool:
     return f" {phrase} " in f" {t} "
 
 
+def is_stop(text: str) -> bool:
+    """A stop word anywhere in `text` (the caller limits the length: STOP_MAX_WORDS)."""
+    t = normalize(text)
+    return any(_has(t, w) for w in STOP_WORDS)
+
+
+def ends_with_stop(text: str) -> bool:
+    """A stop word in the last STOP_MAX_WORDS words. For the echo gate: while the coach talks, the mic
+    hears its words too, so "...cut the avocado in half stop" is the user saying stop."""
+    return is_stop(" ".join(normalize(text).split()[-STOP_MAX_WORDS:]))
+
+
 class IntentRouter:
     """IntentRouterAPI. `use_embeddings=False` skips the model (tests, or if it won't load)."""
 
@@ -121,7 +133,7 @@ class IntentRouter:
             return IntentResult(Intent.OTHER, score=0.0)
         words = t.split()
 
-        if len(words) <= STOP_MAX_WORDS and any(_has(t, w) for w in STOP_WORDS):
+        if len(words) <= STOP_MAX_WORDS and is_stop(t):
             return IntentResult(Intent.STOP)
         if any(_has(t, p) for p in START_OVER_PHRASES):
             return IntentResult(Intent.START_OVER)

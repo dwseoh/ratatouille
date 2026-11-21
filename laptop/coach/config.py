@@ -45,6 +45,13 @@ class Config:
     tts_voice: str = _env("TTS_VOICE", "aura-2-helena-en")
     vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.2"))   # pause that triggers the smart-turn check
     turn_fallback_secs: float = float(_env("TURN_FALLBACK_SECS", "0.9"))  # silence that ends a turn when smart-turn isn't sure
+    # Audio devices by name substring (`python -m tools.try_voice --devices`). Empty = macOS default.
+    # Use a separate mic: a speaker's built-in mic drops Bluetooth into call mode (both sides sound bad).
+    mic_name: str = _env("MIC_NAME", "")
+    speaker_name: str = _env("SPEAKER_NAME", "")
+    # Echo gate: while the coach talks (+ tail), only "stop"/"wait"/"hold on" interrupts. 0 for headphones.
+    echo_gate: bool = _env("ECHO_GATE", "1").lower() in ("1", "true", "yes")
+    echo_tail_s: float = float(_env("ECHO_TAIL_S", "0.3"))   # raise to ~0.5 if a Bluetooth speaker lags
 
     yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
     yolo_device: str = _env("YOLO_DEVICE", "mps")   # Apple GPU

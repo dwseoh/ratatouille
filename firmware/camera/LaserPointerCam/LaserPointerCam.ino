@@ -13,7 +13,7 @@
   compute for real object detection.
 
   Arduino IDE settings (same as Freenove Chapter 6):
-    Board: "ESP32 Wrover Mo dule"   PSRAM: Enabled
+    Board: "ESP32 Wrover Module"   PSRAM: Enabled
     Partition scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
   Works with arduino-esp32 core 2.x and 3.x. No extra libraries needed.
 */
@@ -110,6 +110,17 @@ static float approach(float cur, float tgt, float step) {
 }
 
 // ---------- camera ----------
+// This board's sensor is an OV3660 (the stock CameraWebServer page says so), not the OV2640 the docs assume.
+// Measured 2026-11-21 with the stock example on this board, phone hotspot, laptop pulling :81/stream:
+//   XCLK 10 MHz, any size  -> camera fails (no frames).   <- what stalled this sketch before
+//   XCLK 20 MHz: QVGA 320x240 ~11 fps | CIF 400x296 ~10.5 fps | HVGA 480x320 ~12 fps | VGA 640x480 fails
+// So: 20 MHz, HVGA. Calibrate the aim at this size (calibration is in pixels).
+#define XCLK_HZ      20000000
+#define FRAME_SIZE   FRAMESIZE_HVGA   // 480x320. Fallback: FRAMESIZE_QVGA
+#define FB_COUNT     2                // as the stock example (PSRAM + GRAB_LATEST)
+// JPEG quality: lower number = better image, bigger frames. ~8 KB/frame at HVGA q10-12.
+#define JPEG_QUALITY 12
+
 static bool cameraInit() {
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0;
@@ -122,14 +133,15 @@ static bool cameraInit() {
   c.pin_vsync = VSYNC_GPIO_NUM; c.pin_href  = HREF_GPIO_NUM;
   c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
   c.pin_pwdn = PWDN_GPIO_NUM;   c.pin_reset = RESET_GPIO_NUM;
-  // 10 MHz XCLK: at 20 MHz the sensor pushes pixels faster than the DMA can
-  // drain them into PSRAM while Wi-Fi is busy -> "cam_hal: FB-OVF" spam.
-  c.xclk_freq_hz = 10000000;
+  // NOT 10 MHz: the OV3660 delivers no frames at 10 MHz (that was the stall). FB-OVF lines are harmless.
+  c.xclk_freq_hz = XCLK_HZ;
   c.pixel_format = PIXFORMAT_JPEG;
-  c.frame_size   = FRAMESIZE_VGA;     // 640x480 (README spec)
-  c.jpeg_quality = 15;                // lower number = better quality, bigger frames
+  c.frame_size   = FRAME_SIZE;
+  c.jpeg_quality = JPEG_QUALITY;
   if (psramFound()) {
-    c.fb_count    = 2;
+    // "cam_hal: FB-OVF" = the sensor finished a frame while every buffer was busy (one being sent over
+    // Wi-Fi), so that frame was dropped. Harmless with GRAB_LATEST; judge by the [stream] fps line.
+    c.fb_count    = FB_COUNT;
     c.fb_location = CAMERA_FB_IN_PSRAM;
     c.grab_mode   = CAMERA_GRAB_LATEST; // drop stale frames, lowest latency
   } else {
@@ -141,9 +153,15 @@ static bool cameraInit() {
 
   if (esp_camera_init(&c) != ESP_OK) return false;
   sensor_t *s = esp_camera_sensor_get();
+  Serial.printf("[boot] sensor PID 0x%04x (%s)\n", s->id.PID,
+                s->id.PID == OV3660_PID ? "OV3660" : s->id.PID == OV2640_PID ? "OV2640" : "other");
   s->set_vflip(s, 1);   // matches Freenove example orientation
-  s->set_framesize(s, FRAMESIZE_VGA);   // 640x480
-  s->set_quality(s, 12);                // lower number = better quality, bigger frames
+  if (s->id.PID == OV3660_PID) {        // same tweaks as the stock CameraWebServer
+    s->set_brightness(s, 1);
+    s->set_saturation(s, -2);
+  }
+  s->set_framesize(s, FRAME_SIZE);
+  s->set_quality(s, JPEG_QUALITY);
   // Tip: if the laser dot washes out, lower exposure a bit:
   // s->set_ae_level(s, -2);
   return true;
