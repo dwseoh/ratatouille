@@ -395,3 +395,16 @@ def test_fallbacks_only_for_supported_models():
     assert "fallbacks" not in agent._params([])                      # Haiku 5.5 has no server-side fallback
     agent.cfg = Config(model="claude-opus-5-5")
     assert agent._params([])["fallbacks"] == "default"
+
+
+def test_pushback_reason_reaches_the_model_via_the_tool_result():
+    from coach.steps import StepVerdict, Steps
+    s1 = FakeStream([text("Looks mashed to me. "), tool("a", "propose_done", {})], "tool_use")
+    s2 = FakeStream([text("Hold on, not yet then. ")])
+    agent, st, client, aimer = make_agent(s1, s2, step=2)
+    steps = Steps(st, None, lambda step: StepVerdict(False, 0.9, "still big chunks of avocado"))
+    agent.handlers = make_handlers(st, aimer, steps, FakeLink())
+    run(agent.turn("I'm done", [], Sink()))
+    run(agent.turn("really?", [], Sink()))
+    result = client.requests[1]["messages"][-1]["content"][0]
+    assert result["content"] == "push_back: still big chunks of avocado" and st.step == 2

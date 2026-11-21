@@ -178,7 +178,8 @@ def make_handlers(state: State, aimer, steps, link) -> dict[str, Callable[..., s
     def propose_done() -> str:
         verdict = steps.propose_done("llm")
         state.log("agent", f"proposed step done -> {verdict}")
-        return verdict
+        reason = getattr(steps, "reason", "")       # set by Steps on a push_back, e.g. "still whole avocados"
+        return f"{verdict}: {reason}" if reason and verdict == "push_back" else verdict
 
     def show_text(text: str) -> str:
         link.show_text(TFT_AGENT, text[:20])
