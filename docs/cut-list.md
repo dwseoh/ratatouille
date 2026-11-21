@@ -24,3 +24,13 @@ up from here **after a full guacamole run works**. Newest at the top of each sec
 | **Blink check** (laser off for a frame to tell the dot from red food) | Cut | Only needed for the dot finder. | Part of P4. ~1-2 h. |
 | **"Hey chef" wake phrase** | Stretch. BOOT button starts/resets for v1. | The button is simpler and can't false-trigger. | Fuzzy match in interim transcripts (V5). ~1-2 h. |
 | **Detailed latency telemetry** | 4 timestamps: speech end, first token, first audio, laser moved | Enough for the dashboard + pitch. | Full C9 record. ~1 h. |
+
+## Future ideas: accessibility (after v1, see docs/roles/C.md section 4b for what's in v1)
+
+| Idea | Who it helps | Owner | How |
+|---|---|---|---|
+| **Button as a universal fallback**: short press = repeat the step, long press = reset | Speech that STT struggles with (dysarthria, aphasia, strong accents) | A (firmware: short/long press messages) + B (session) | S3 sends `B1` / `B2` instead of `B`. Small protocol change. |
+| **Specific praise after each step** ("nice, those halves look perfect") | IDD, TBI, anyone building confidence | C | Prompt rule after `propose_done` → advance. ~15 min. |
+| **Safety story for the pitch**: laser clamped below horizontal, 30 s auto-off, knife tips in steps, not a replacement for supervision | Everyone, especially dementia/IDD | All | Mostly already built; write it into the pitch. |
+| **Laser blinks or circles on the target** so a still dot is easy to find | Low vision, visual neglect, attention difficulties | A | Blink: toggle `link.laser` at ~3 Hz while `on_target`. Circle: add a ~2° circular offset to pan/tilt over ~0.5 s. Make sure the S3's 0.5 s watchdog and the dot finder (if used) cope with blinking. |
+| **Laser guides cutting/placement** (traces where to cut, marks where to put the knife) | Shaky hands, dyspraxia, spatial difficulties | A + C | Needs closed-loop aiming (dot finder) and object-relative positions ("a line through the middle of the avocado"). Agent tool like `trace(name, "halve")`. Hardest one; demo-able only with good calibration. Keep the beam off faces (it's already clamped below horizontal). |

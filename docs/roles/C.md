@@ -260,6 +260,45 @@ Mostly covered in 1.8. Also:
 - If the API key is missing at startup, print a clear error and run with `FakeAgent`-style canned lines.
 - Offline mode is cut (see cut-list.md).
 
+## 4b. Accessibility features (v1)
+
+Who this is for: people for whom a written recipe is the barrier (dyslexia, language processing disorders,
+dyscalculia, dyspraxia, autism, IDD, TBI/stroke, early dementia). Most of this is prompt + settings, so it's cheap.
+Do these after check-ins work (Sat late AM / Sun AM). Settings go in `config.py` / `.env`.
+
+1. **Plain-language mode ("say it simpler" / "slower").**
+   - Setting `PLAIN_LANGUAGE=1`, or the user says "say it simpler" / "too fast" (the agent switches for the rest
+     of the session; keep a `self.plain` flag and add one line to the turn text: `[mode: plain]`).
+   - Prompt addendum for plain mode: sentences under ~12 words, one action per sentence, no idioms, no numbers.
+     Use concrete amounts instead ("about half the lime", "a pinch", "until it looks like this") and point at it.
+   - Slower speech is B's side (TTS speed or a short pause between sentences). Agree with Hanjing on a
+     `SPEECH_RATE` setting; the agent just sends shorter sentences.
+   - Test: in `try_agent`, "say it simpler" then "how do I cut the avocado" gives short, number-free sentences.
+2. **"Where am I?" / "what was I doing?"**
+   - Prompt rule: always answer with the current step number + `short` + the last thing they did, then the next action.
+   - Keep a `last_action` string (the last sentence the coach said about the task) and put it in the turn text,
+     because `State.note()` only has the step and events.
+   - Test: mid-recipe, "wait, where was I?" gives "You're on step 3, mashing. Next, ...".
+3. **Spatial language with the laser.**
+   - Build `positions(dets, w, h)` in `agent.py`: each visible object gets left/centre/right (x thirds) and
+     near/far (bottom half of the frame = near). Send it instead of the bare visible list:
+     `visible: lime (left, near), bowl (centre, far)`.
+   - Prompt rule: when you point at something, also say where it is ("the lime, on your left").
+   - Helps low vision, aphasia, and anyone who can't spot the dot.
+4. **Never rush.**
+   - Steps only advance when the user says done or confirms an "ask" (already the v1 rule, keep it).
+   - Check-in level setting `CHECKINS=off|gentle|normal` (gentle = 45 s quiet, normal = 20 s). The user can say
+     "talk less" / "talk more" to change it. Some autistic users find constant comments overwhelming.
+   - Never use time pressure in the prompt ("quickly", "hurry").
+5. **Captions on the dashboard.**
+   - A big, high-contrast panel: current step (large text), the last coach sentence and the user's last words as
+     live captions (font >= 32 px). Pulls `State.transcript` + the agent's sentences (keep the last 3).
+   - The TFT already shows the step. Together these cover hearing loss and auditory processing.
+
+Pitch: pick ONE persona for the demo (e.g. relearning to cook after a stroke, one good hand, long instructions
+are hard; or someone with dyslexia who can't follow written recipes) and show 2-3 of these features on them.
+Say "designed with X in mind", not medical claims. Future accessibility ideas are in `docs/cut-list.md`.
+
 ## 5. Dashboard (`dashboard.py`)
 
 One FastAPI app in the same process, on the same asyncio loop:
@@ -350,7 +389,7 @@ sentence, whether it ever reads the recipe out.
 | Sat late AM | Check-ins (`checkin.py`). Prompt tuning with real voice. | Agree with Hanjing: who calls `propose_done("user")`, `last_activity`, latency marks. |
 | Sat PM | Dashboard v1: `/stream`, `/state`, `/` with a fake State. History trimming (1.9). | Swap `FakeAimer` for dw127's real Aimer when it's ready (~6 pm). |
 | Sat eve | Integration with everyone (`main.py`). First full run. | |
-| Sun AM | Dashboard polish (latency bars, event log). Prompt tuning from the run. Prewarm before demos. | **Dashboard done Sun AM.** |
+| Sun AM | Dashboard polish (latency bars, event log, captions panel). Accessibility features 4b (1-5). Prompt tuning from the run. Prewarm before demos. | **Dashboard done Sun AM.** |
 | Sun PM | Rehearsals + backup video (everyone). | |
 
 ## 8. Pitfalls
