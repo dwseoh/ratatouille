@@ -1,20 +1,8 @@
 """Perception: YOLO-World object boxes + red laser dot. Runs every frame in a worker thread."""
-from dataclasses import dataclass
-
 import cv2
 import numpy as np
 
-
-@dataclass
-class Det:
-    name: str
-    conf: float
-    box: tuple  # x1, y1, x2, y2 (px)
-
-    @property
-    def center(self):
-        x1, y1, x2, y2 = self.box
-        return ((x1 + x2) / 2, (y1 + y2) / 2)
+from .contracts import Det  # shared detection type (name, conf, box, center)
 
 
 class Detector:

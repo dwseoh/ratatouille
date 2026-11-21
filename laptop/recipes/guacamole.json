@@ -1,13 +1,81 @@
 {
   "name": "Guacamole",
   "objects": ["avocado", "lime", "onion", "tomato", "cilantro", "knife", "bowl", "cutting board", "fork", "salt"],
+  "aliases": {
+    "avocado": ["avocados", "avo", "avos"],
+    "lime": ["limes", "green one", "the green one", "citrus"],
+    "onion": ["onions", "red onion"],
+    "tomato": ["tomatoes", "the red one"],
+    "cilantro": ["coriander", "herbs", "the herbs"],
+    "knife": ["knives", "blade"],
+    "bowl": ["bowls", "the bowl"],
+    "cutting board": ["board", "chopping board", "cutting boards"],
+    "fork": ["forks"],
+    "salt": ["the salt", "salt shaker"]
+  },
   "steps": [
-    {"short": "halve avocados", "say": "Cut the avocados in half lengthwise around the pit.", "done_when": "avocado halves visible, cut faces up"},
-    {"short": "remove pits", "say": "Remove the pits and scoop the flesh into the bowl.", "done_when": "green flesh in bowl, empty skins"},
-    {"short": "mash", "say": "Mash the avocado with a fork, leave it a bit chunky.", "done_when": "mashed texture in bowl"},
-    {"short": "dice onion", "say": "Finely dice about a quarter of an onion.", "done_when": "small onion pieces on board"},
-    {"short": "dice tomato", "say": "Dice one tomato and add it with the onion.", "done_when": "tomato and onion in bowl"},
-    {"short": "lime + salt", "say": "Squeeze in half a lime and add a pinch of salt.", "done_when": "lime squeezed over bowl"},
-    {"short": "cilantro, mix", "say": "Chop some cilantro, add it, and stir everything together.", "done_when": "mixed, green flecks visible"}
+    {
+      "short": "halve avocados",
+      "goal": "Cut each avocado in half lengthwise, around the pit.",
+      "how": ["put the avocado flat on the board", "push the knife in until it hits the pit", "rotate the avocado all the way around the knife", "twist the two halves apart"],
+      "tips": ["keep the avocado on the board, never in your palm", "hold it with fingers curled away from the blade (claw grip)"],
+      "point": ["avocado", "knife"],
+      "done_when": "avocado halves visible, cut faces up",
+      "fallback": "Cut the avocados in half lengthwise around the pit."
+    },
+    {
+      "short": "remove pits",
+      "goal": "Get the pits out and scoop the flesh into the bowl.",
+      "how": ["scoop the pit out with a spoon (or ease it out with your fingers)", "scoop the green flesh into the bowl", "throw away the skins"],
+      "tips": ["don't stab the pit with the knife while holding the avocado in your hand", "ripe flesh should come away from the skin easily"],
+      "point": ["avocado", "bowl"],
+      "done_when": "green flesh in bowl, empty skins",
+      "fallback": "Remove the pits and scoop the flesh into the bowl."
+    },
+    {
+      "short": "mash",
+      "goal": "Mash the avocado, leaving it a bit chunky.",
+      "how": ["press down with the back of the fork", "work around the bowl", "stop while there are still small lumps"],
+      "tips": ["chunky is better than smooth for guacamole", "tilt the bowl so it doesn't slide"],
+      "point": ["fork", "bowl"],
+      "done_when": "mashed texture in bowl",
+      "fallback": "Mash the avocado with a fork, leave it a bit chunky."
+    },
+    {
+      "short": "dice onion",
+      "goal": "Finely dice about a quarter of an onion.",
+      "how": ["cut a quarter off the onion and peel it", "slice it thinly one way, then across", "rock the knife over the pieces to make them smaller"],
+      "tips": ["claw grip: tuck your fingertips in and let the knife touch your knuckles", "keep the flat side of the onion down so it doesn't roll"],
+      "point": ["onion", "knife", "cutting board"],
+      "done_when": "small onion pieces on board",
+      "fallback": "Finely dice about a quarter of an onion."
+    },
+    {
+      "short": "dice tomato",
+      "goal": "Dice one tomato and add it to the bowl with the onion.",
+      "how": ["cut the tomato in half", "scoop out the watery seeds if you like", "cut it into small cubes", "slide the tomato and onion into the bowl"],
+      "tips": ["a sawing motion works better than pressing on soft tomato", "claw grip again for the small cuts"],
+      "point": ["tomato", "knife", "bowl"],
+      "done_when": "tomato and onion in bowl",
+      "fallback": "Dice one tomato and add it with the onion."
+    },
+    {
+      "short": "lime + salt",
+      "goal": "Squeeze in half a lime and add a pinch of salt.",
+      "how": ["cut the lime in half", "squeeze one half over the bowl, catching the seeds", "add a pinch of salt"],
+      "tips": ["roll the lime on the board first to get more juice", "you can add more salt at the end after tasting"],
+      "point": ["lime", "salt", "bowl"],
+      "done_when": "lime squeezed over bowl",
+      "fallback": "Squeeze in half a lime and add a pinch of salt."
+    },
+    {
+      "short": "cilantro, mix",
+      "goal": "Chop some cilantro, add it, and stir everything together.",
+      "how": ["bunch up a small handful of cilantro", "chop it finely", "add it to the bowl", "stir everything together and taste"],
+      "tips": ["the stems are fine to use, they have lots of flavour", "taste and adjust with more lime or salt"],
+      "point": ["cilantro", "bowl"],
+      "done_when": "mixed, green flecks visible",
+      "fallback": "Chop some cilantro, add it, and stir everything together."
+    }
   ]
 }

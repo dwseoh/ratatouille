@@ -21,7 +21,7 @@ class Config:
     control_hz: float = 30.0
 
     # Claude. Measure latency of these against each other on day 1 (see docs/architecture.md).
-    model: str = _env("CLAUDE_MODEL", "claude-opus-5-5")
+    model: str = _env("CLAUDE_MODEL", "claude-haiku-5-5")
     effort: str = _env("CLAUDE_EFFORT", "low")
     frames_per_turn: int = 3          # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending

@@ -13,6 +13,7 @@ from .vision import Detector, find_red_dot
 from .voice import Speaker, Transcriber, keyword_target
 
 
+# TODO(integration): replace this State with contracts.State (single writer per field).
 class State:
     def __init__(self, recipe):
         self.recipe = recipe
