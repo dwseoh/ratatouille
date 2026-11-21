@@ -3,6 +3,10 @@
 The servos visit a 4x4 grid of (pan, tilt). For each one, click the laser dot in the window.
 Keys: s = skip point (dot off-screen), r = redo last point, t = test mode (click -> laser goes there), q = quit.
 Calibrate at the demo counter distance. Redo only if the camera or pan-tilt moved relative to each other.
+
+--auto (stretch): same grid, no window and no clicks. At each point the dot finder + a blink check
+(laser off for a moment, the dot must disappear) locates the dot; points where it isn't found are skipped.
+Same save gate and error report. Then check it with the click tool's test mode (t).
 """
 from __future__ import annotations
 
@@ -10,13 +14,18 @@ import argparse
 import asyncio
 import time
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from .aim import Calibration
+from .contracts import ControlLinkAPI, FrameSource
+from .dot import LAG_S, blink_dot
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "calibration.json"   # laptop/calibration.json
 MIN_SAVE_POINTS = 9
 WARN_DEG = 2.0
 SETTLE_S = 0.4
+AUTO_SETTLE_S = 0.6     # --auto: servo move + camera lag before looking for the dot
+AUTO_TRIES = 2          # --auto: blinks per grid point before skipping it
 
 
 def make_grid(pan=(60.0, 120.0), tilt=(30.0, 90.0), n: int = 4) -> list[tuple[float, float]]:
@@ -84,6 +93,37 @@ def fit_and_save(pixels, angles, path=DEFAULT_OUT, warn_deg: float = WARN_DEG) -
     return calib, lines, worst
 
 
+async def auto_sweep(link: ControlLinkAPI, frames: FrameSource, grid: list[tuple[float, float]],
+                     settle_s: float = AUTO_SETTLE_S, tries: int = AUTO_TRIES, lag_s: float = LAG_S,
+                     sleep: Callable[[float], Awaitable] = asyncio.sleep,
+                     log: Callable[[str], None] = print) -> CalibSession:
+    """--auto: visit the grid and locate the dot with find_red_dot + a blink check instead of a click.
+
+    Points with no confirmed dot after `tries` blinks are skipped. Leaves the laser on; the caller turns it off.
+    """
+    sess = CalibSession(grid)
+    link.laser = True
+    while not sess.done:
+        pan, tilt = sess.current()
+        link.pan, link.tilt = pan, tilt
+        await sleep(max(settle_s, lag_s))
+        p = None
+        for k in range(tries):
+            if k:
+                await sleep(lag_s)      # the laser just came back on: wait until the frames show it
+            p = await blink_dot(link, frames, lag_s=lag_s, sleep=sleep)
+            if p is not None:
+                break
+        n = f"point {sess.i + 1}/{len(grid)} pan {pan:.0f} tilt {tilt:.0f}"
+        if p is None:
+            sess.skip()
+            log(f"{n}: no dot, skipped")
+        else:
+            sess.click(*p)
+            log(f"{n}: dot at ({p[0]:.0f},{p[1]:.0f})")
+    return sess
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GUI (cv2 window). Needs a display, the camera and the S3 (or tools/fake_s3.py).
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -102,6 +142,21 @@ def _finish(sess: CalibSession, out: Path) -> Calibration | None:
     return calib
 
 
+async def _auto_main(args, link, frames, out: Path) -> None:
+    for _ in range(100):                # up to 10 s for the first frame
+        if frames.latest()[0] is not None:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        print("no camera frames, check CAM_URL")
+        return
+    grid = make_grid((args.pan_min, args.pan_max), (args.tilt_min, args.tilt_max), args.n)
+    print(f"auto calibration: {len(grid)} points, keep the counter clear of people")
+    sess = await auto_sweep(link, frames, grid, settle_s=args.settle_ms / 1000)
+    link.laser = False
+    _finish(sess, out)
+
+
 async def _main(args) -> None:
     import cv2
 
@@ -113,6 +168,14 @@ async def _main(args) -> None:
     frames = FrameGrabber(int(cam) if str(cam).isdigit() else cam).start()
     link = await ControlLink(CONFIG.ctl_host, CONFIG.ctl_port).start()
     out = Path(args.out)
+    if args.auto:
+        try:
+            await _auto_main(args, link, frames, out)
+        finally:
+            link.laser = False
+            await asyncio.sleep(0.1)    # one more packet with the laser off
+            frames.stop()
+        return
     sess = CalibSession(make_grid((args.pan_min, args.pan_max), (args.tilt_min, args.tilt_max), args.n))
     calib = Calibration.load(out) if out.exists() else None
     test_mode, saved = False, False
@@ -196,9 +259,14 @@ def main(argv=None) -> None:
     ap.add_argument("--tilt-min", type=float, default=30.0, help="set to your safe range (see control_s3.ino)")
     ap.add_argument("--tilt-max", type=float, default=90.0)
     ap.add_argument("-n", type=int, default=4, help="grid size per axis (n x n points)")
-    ap.add_argument("--settle-ms", type=float, default=SETTLE_S * 1000)
+    ap.add_argument("--settle-ms", type=float, default=None,
+                    help=f"wait after each move (default {SETTLE_S * 1000:.0f}, {AUTO_SETTLE_S * 1000:.0f} with --auto)")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
-    asyncio.run(_main(ap.parse_args(argv)))
+    ap.add_argument("--auto", action="store_true", help="find the dot automatically (dot finder + blink check)")
+    args = ap.parse_args(argv)
+    if args.settle_ms is None:
+        args.settle_ms = (AUTO_SETTLE_S if args.auto else SETTLE_S) * 1000
+    asyncio.run(_main(args))
 
 
 if __name__ == "__main__":

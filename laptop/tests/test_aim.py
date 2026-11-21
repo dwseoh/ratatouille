@@ -8,6 +8,7 @@ import pytest
 from coach.aim import Aimer, Calibration
 from coach.calibrate import CalibSession, fit_and_save, make_grid
 from coach.contracts import LASER_IDLE_OFF_S, TFT_STATUS, AimerAPI, Det, FakeLink, Recipe, State, fake_dets
+from coach.contracts import LAT_ON_TARGET, TurnLatency
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 
@@ -283,3 +284,121 @@ def test_session_done_and_save_gate(tmp_path):
     calib, lines, worst = fit_and_save(*s.points(), tmp_path / "c.json")
     assert len(lines) == 16 and worst < 1e-6
     assert Calibration.load(tmp_path / "c.json").angles_for((320, 240)) == pytest.approx((70, 60))
+
+
+# ── closed loop (stretch, Aimer(closed_loop=True)) ───────────────────────────
+
+def cam_px(pan, tilt):
+    """Where the dot really lands: linear_calib's inverse with a scale + offset error, so open loop misses."""
+    return 8.5 * (pan - 30) + 20, 7.6 * (90 - tilt) - 15
+
+
+def cl_ticks(aimer, clock, n, cam=cam_px, dt=1 / 30):
+    """Ticks with a perfect, instant dot finder: State.dot = where the dot really is."""
+    for _ in range(n):
+        clock.advance(dt)
+        aimer.state.dot = cam(aimer.link.pan, aimer.link.tilt) if aimer.link.laser else None
+        aimer.tick()
+
+
+def dot_err(aimer, name="lime", cam=cam_px):
+    tx, ty = aimer.state.det(name).center
+    x, y = cam(aimer.link.pan, aimer.link.tilt)
+    return float(np.hypot(x - tx, y - ty))
+
+
+@pytest.fixture
+def cl_rig():
+    link, clock = SpyLink(), Clock()
+    st = State(RECIPE, dets=fake_dets())
+    return Aimer(link, linear_calib(), st, clock=clock, closed_loop=True), link, st, clock
+
+
+def test_closed_loop_off_by_default(rig):
+    aimer, link, st, clock = rig
+    assert aimer.closed_loop is False
+    aimer.point_at("lime")
+    cl_ticks(aimer, clock, 60, cam=lambda p, t: (0.0, 0.0))    # a dot far off changes nothing in open loop
+    assert aimer.on_target and aimer.trim == (0.0, 0.0)
+    assert (link.pan, link.tilt) == pytest.approx(aimer.calib.angles_for(st.det("lime").center), abs=0.5)
+
+
+def test_closed_loop_converges(rig, cl_rig):
+    ol, _, _, ol_clock = rig
+    ol.point_at("lime")
+    cl_ticks(ol, ol_clock, 60)
+    assert ol.on_target and dot_err(ol) > 30                  # open loop says on target, but it's ~44 px off
+
+    aimer, link, st, clock = cl_rig
+    st.turns.append(TurnLatency(1))
+    aimer.point_at("lime")
+    t0 = clock()
+    while not aimer.on_target and clock() - t0 < 3:
+        cl_ticks(aimer, clock, 1)
+        assert not aimer.on_target or dot_err(aimer) <= Aimer.CLOSE_PX   # never "on target" while really off
+    assert aimer.on_target and st.on_target and dot_err(aimer) <= Aimer.CLOSE_PX
+    assert clock() - t0 < 2.0
+    assert LAT_ON_TARGET in st.turns[-1].marks
+    pan, tilt = link.pan, link.tilt
+    cl_ticks(aimer, clock, 60)                                  # stays put, no hunting
+    assert (link.pan, link.tilt) == (pan, tilt) and aimer.on_target
+
+
+def test_closed_loop_follows_moving_target(cl_rig):
+    aimer, link, st, clock = cl_rig
+    aimer.point_at("lime")
+    cl_ticks(aimer, clock, 60)
+    assert aimer.on_target
+    st.dets = [d for d in st.dets if d.name != "lime"] + [box_at("lime", 450, 300)]
+    cl_ticks(aimer, clock, 90)
+    assert aimer.on_target and dot_err(aimer) <= Aimer.CLOSE_PX
+
+
+def test_closed_loop_flips_a_mirrored_axis(cl_rig):
+    aimer, link, st, clock = cl_rig
+    mirrored = lambda pan, tilt: (560 - 8 * (pan - 30), 8 * (90 - tilt) - 6)   # x runs the other way
+    aimer.point_at("lime")
+    cl_ticks(aimer, clock, 120, cam=mirrored)
+    assert aimer._sign == [-1.0, 1.0]
+    assert aimer.on_target and dot_err(aimer, cam=mirrored) <= Aimer.CLOSE_PX
+
+
+def test_closed_loop_trim_limited_and_pan_clamped(cl_rig):
+    aimer, link, st, clock = cl_rig
+    px = grid_pixels()
+    aimer.calib = Calibration().fit(px, [(131.25 + x / 8, 90 - y / 8) for x, y in px])   # lime -> pan 165
+    aimer.point_at("lime")
+    prev = (link.pan, link.tilt)
+    for _ in range(150):
+        cl_ticks(aimer, clock, 1, cam=lambda p, t: (0.0, 0.0))    # a bad detection stuck in the corner
+        assert abs(link.pan - prev[0]) <= 4.0 + 1e-9 and abs(link.tilt - prev[1]) <= 4.0 + 1e-9
+        assert Aimer.PAN_MIN <= link.pan <= Aimer.PAN_MAX
+        prev = (link.pan, link.tilt)
+    assert aimer.trim == pytest.approx((Aimer.CL_MAX_TRIM_DEG, -Aimer.CL_MAX_TRIM_DEG))
+    assert link.pan == pytest.approx(170.0) and not aimer.on_target
+
+
+def test_closed_loop_without_dot_falls_back_to_open_loop(cl_rig):
+    aimer, link, st, clock = cl_rig
+    aimer.point_at("lime")
+    run_ticks(aimer, clock, 20)                 # servos there, no dot seen yet: still looking
+    assert not aimer.on_target and st.dot is None
+    run_ticks(aimer, clock, 40)                 # no dot for > CL_DOT_TIMEOUT_S: trust the calibration
+    assert aimer.on_target and aimer.trim == (0.0, 0.0)
+    assert (link.pan, link.tilt) == pytest.approx(aimer.calib.angles_for(st.det("lime").center), abs=0.5)
+
+
+def test_closed_loop_trim_resets_on_new_target_and_laser_off(cl_rig):
+    aimer, link, st, clock = cl_rig
+    aimer.point_at("lime")
+    cl_ticks(aimer, clock, 60)
+    trim = aimer.trim
+    assert aimer.on_target and trim != (0.0, 0.0)
+    aimer.point_at("lime")                      # asked again: same object, keep what we learned
+    assert aimer.trim == trim
+    aimer.point_at("avocado")
+    assert aimer.trim == (0.0, 0.0)
+    cl_ticks(aimer, clock, 60)
+    assert aimer.on_target and dot_err(aimer, "avocado") <= Aimer.CLOSE_PX
+    aimer.laser_off()
+    assert aimer.trim == (0.0, 0.0) and not aimer.on_target
