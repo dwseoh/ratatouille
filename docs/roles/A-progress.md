@@ -26,7 +26,7 @@
 | 2 | Closed-loop correction | ✅ overnight (`main.py --closed-loop`) |
 | 3 | Blink check | ✅ overnight |
 | 4 | Automatic calibration | ✅ overnight (`calibrate --auto`) |
-| 5 | Calibration in the dashboard | ⏳ not started (dashboard is C's) |
+| 5 | Calibration in the dashboard | ✅ `python -m coach.calib_web` (own page, fakes only; `mount()` hook for C's dashboard) |
 
 ## Hand-offs to teammates
 

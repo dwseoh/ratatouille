@@ -7,6 +7,8 @@ Calibrate at the demo counter distance. Redo only if the camera or pan-tilt move
 --auto (stretch): same grid, no window and no clicks. At each point the dot finder + a blink check
 (laser off for a moment, the dot must disappear) locates the dot; points where it isn't found are skipped.
 Same save gate and error report. Then check it with the click tool's test mode (t).
+
+The same steps run from a browser: python -m coach.calib_web (see calib_web.py). Both use the helpers below.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ WARN_DEG = 2.0
 SETTLE_S = 0.4
 AUTO_SETTLE_S = 0.6     # --auto: servo move + camera lag before looking for the dot
 AUTO_TRIES = 2          # --auto: blinks per grid point before skipping it
+TEST_PAN = (10.0, 170.0)    # test mode clamps pan to this
 
 
 def make_grid(pan=(60.0, 120.0), tilt=(30.0, 90.0), n: int = 4) -> list[tuple[float, float]]:
@@ -93,15 +96,57 @@ def fit_and_save(pixels, angles, path=DEFAULT_OUT, warn_deg: float = WARN_DEG) -
     return calib, lines, worst
 
 
+def finish(sess: CalibSession, out: Path, log: Callable[[str], None] = print) -> Calibration | None:
+    """Fit + save the session's points and log the report. None (and nothing saved) if there are too few points."""
+    pixels, angles = sess.points()
+    try:
+        calib, lines, worst = fit_and_save(pixels, angles, out)
+    except ValueError as e:
+        log(f"NOT SAVED: {e}")
+        return None
+    for ln in lines:
+        log(ln)
+    log(f"saved {out} ({len(pixels)} points, worst error {worst:.2f} deg)")
+    if worst > WARN_DEG:
+        log(f"WARNING: some points are off by more than {WARN_DEG} deg. Redo them (r) or rerun.")
+    return calib
+
+
+def aim_at_pixel(calib: Calibration, link: ControlLinkAPI, px: tuple[float, float]) -> tuple[float, float]:
+    """Test mode: point the laser at pixel px with calib. Returns the (unclamped) angles."""
+    p, t = calib.angles_for(px)
+    link.pan, link.tilt = min(max(p, TEST_PAN[0]), TEST_PAN[1]), t
+    return p, t
+
+
+def draw_points(frame, sess: CalibSession):
+    """Copy of frame with the clicked points as green dots."""
+    import cv2
+    img = frame.copy()
+    for x, y in sess.points()[0]:
+        cv2.circle(img, (int(x), int(y)), 4, (0, 255, 0), -1)
+    return img
+
+
+async def wait_for_frame(frames: FrameSource, timeout_s: float = 10.0) -> bool:
+    """True once the camera has delivered a frame, False after timeout_s."""
+    for _ in range(max(1, int(timeout_s / 0.1))):
+        if frames.latest()[0] is not None:
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
 async def auto_sweep(link: ControlLinkAPI, frames: FrameSource, grid: list[tuple[float, float]],
                      settle_s: float = AUTO_SETTLE_S, tries: int = AUTO_TRIES, lag_s: float = LAG_S,
                      sleep: Callable[[float], Awaitable] = asyncio.sleep,
-                     log: Callable[[str], None] = print) -> CalibSession:
+                     log: Callable[[str], None] = print, sess: CalibSession | None = None) -> CalibSession:
     """--auto: visit the grid and locate the dot with find_red_dot + a blink check instead of a click.
 
     Points with no confirmed dot after `tries` blinks are skipped. Leaves the laser on; the caller turns it off.
+    Pass `sess` (a fresh CalibSession over `grid`) to watch progress while it runs.
     """
-    sess = CalibSession(grid)
+    sess = sess if sess is not None else CalibSession(grid)
     link.laser = True
     while not sess.done:
         pan, tilt = sess.current()
@@ -128,33 +173,15 @@ async def auto_sweep(link: ControlLinkAPI, frames: FrameSource, grid: list[tuple
 # GUI (cv2 window). Needs a display, the camera and the S3 (or tools/fake_s3.py).
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _finish(sess: CalibSession, out: Path) -> Calibration | None:
-    pixels, angles = sess.points()
-    try:
-        calib, lines, worst = fit_and_save(pixels, angles, out)
-    except ValueError as e:
-        print(f"NOT SAVED: {e}")
-        return None
-    print("\n".join(lines))
-    print(f"saved {out} ({len(pixels)} points, worst error {worst:.2f} deg)")
-    if worst > WARN_DEG:
-        print(f"WARNING: some points are off by more than {WARN_DEG} deg. Redo them (r) or rerun.")
-    return calib
-
-
 async def _auto_main(args, link, frames, out: Path) -> None:
-    for _ in range(100):                # up to 10 s for the first frame
-        if frames.latest()[0] is not None:
-            break
-        await asyncio.sleep(0.1)
-    else:
+    if not await wait_for_frame(frames):
         print("no camera frames, check CAM_URL")
         return
-    grid = make_grid((args.pan_min, args.pan_max), (args.tilt_min, args.tilt_max), args.n)
+    grid = grid_from_args(args)
     print(f"auto calibration: {len(grid)} points, keep the counter clear of people")
     sess = await auto_sweep(link, frames, grid, settle_s=args.settle_ms / 1000)
     link.laser = False
-    _finish(sess, out)
+    finish(sess, out)
 
 
 async def _main(args) -> None:
@@ -176,7 +203,7 @@ async def _main(args) -> None:
             await asyncio.sleep(0.1)    # one more packet with the laser off
             frames.stop()
         return
-    sess = CalibSession(make_grid((args.pan_min, args.pan_max), (args.tilt_min, args.tilt_max), args.n))
+    sess = CalibSession(grid_from_args(args))
     calib = Calibration.load(out) if out.exists() else None
     test_mode, saved = False, False
     clicks: list[tuple[int, int]] = []
@@ -201,10 +228,7 @@ async def _main(args) -> None:
 
             frame, _ = frames.latest()
             if frame is not None:
-                img = frame.copy()
-                px, _ = sess.points()
-                for x, y in px:
-                    cv2.circle(img, (int(x), int(y)), 4, (0, 255, 0), -1)
+                img = draw_points(frame, sess)
                 if test_mode:
                     msg = "TEST: click a spot" if calib else "TEST: no calibration yet"
                 elif goal is None:
@@ -219,21 +243,20 @@ async def _main(args) -> None:
                 x, y = clicks.pop(0)
                 if test_mode:
                     if calib is not None:
-                        p, t = calib.angles_for((x, y))
-                        link.pan, link.tilt = min(max(p, 10.0), 170.0), t
+                        p, t = aim_at_pixel(calib, link, (x, y))
                         print(f"test: ({x},{y}) -> pan {p:.1f} tilt {t:.1f}")
                 elif goal is not None and settled:
                     sess.click(x, y)
                     print(f"point {sess.i}/{len(sess.grid)}: ({x},{y}) -> {goal}")
 
             if sess.done and not saved and not test_mode:
-                calib = _finish(sess, out) or calib
+                calib = finish(sess, out) or calib
                 saved = True
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 if not saved and sess.n_points:
-                    calib = _finish(sess, out) or calib
+                    calib = finish(sess, out) or calib
                 break
             elif key == ord("s") and not test_mode:
                 sess.skip()
@@ -252,8 +275,8 @@ async def _main(args) -> None:
         frames.stop()
 
 
-def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_grid_args(ap: argparse.ArgumentParser) -> None:
+    """Grid, settle and output options, shared with calib_web."""
     ap.add_argument("--pan-min", type=float, default=60.0)
     ap.add_argument("--pan-max", type=float, default=120.0)
     ap.add_argument("--tilt-min", type=float, default=30.0, help="set to your safe range (see control_s3.ino)")
@@ -262,6 +285,15 @@ def main(argv=None) -> None:
     ap.add_argument("--settle-ms", type=float, default=None,
                     help=f"wait after each move (default {SETTLE_S * 1000:.0f}, {AUTO_SETTLE_S * 1000:.0f} with --auto)")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+
+
+def grid_from_args(args) -> list[tuple[float, float]]:
+    return make_grid((args.pan_min, args.pan_max), (args.tilt_min, args.tilt_max), args.n)
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_grid_args(ap)
     ap.add_argument("--auto", action="store_true", help="find the dot automatically (dot finder + blink check)")
     args = ap.parse_args(argv)
     if args.settle_ms is None:
