@@ -4,7 +4,7 @@ A detailed spec for every task in [dev-plan.md](dev-plan.md): what to build, whe
 needs from other people, what it hands to them, and how to know it's done. Read your own tasks plus
 the **contracts** section, because that's the part other people code against.
 
-- **A** = hardware + pointing. **B** = voice + YOLO + telemetry. **C** = brain + dashboard.
+- **A** = hardware + pointing (dw127?). **B** = voice + YOLO + telemetry (**Hanjing**). **C** = brain + dashboard (**Chloe**).
 - Times are in the event's local time. Fri = tonight, Sat, Sun.
 - "Blocks" lists who is waiting on the task. If you're late on one of those, say so in the chat early.
 - If you're blocked, switch to the mock listed and never wait.
@@ -309,7 +309,16 @@ A `B` button press, or "start over", resets: `Steps.reset()`, `Aimer.laser_off()
 - **LLM proposes** (the `propose_done` tool) → same as user.
 - **Tests:** `tests/test_steps.py` talks through all 7 steps, including push-back and vision-asks-first.
 
-#### B3. Watcher (C, Sat AM → PM, M)
+#### B3a. Check-ins (C, Sat AM, S). **Replaces the watcher below for v1 (decided 2026-11-21)**
+- **File:** `laptop/coach/checkin.py` (new). It reuses `Agent.turn`: no second model, no event log, no background vision loop.
+- **Triggers:** (1) a new step starts → the coach explains it and points (`point` from the recipe);
+  (2) ~20 s of silence during a step → one turn with fresh frames and the hidden user text
+  `"[check-in: comment briefly only if something is worth saying, otherwise reply with nothing]"`.
+- Only fires when the mic is quiet, the coach isn't speaking, and no turn is running. An empty reply = say nothing.
+- Speaks through `Speech.say(text, PROACTIVE)`. The priority rule for now is just "only when quiet", which already holds.
+- **Done when:** during a webcam run it speaks up at least once per step without being asked, and never talks over the user.
+
+#### B3. Watcher (stretch, only after a full run works)
 - **File:** `laptop/coach/watcher.py` (new).
 - **Trigger:** only when something changes: the set of visible objects changed, the user said "done", or 10 s
   passed during a step. Never while `State.speaking`.
