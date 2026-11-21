@@ -15,6 +15,7 @@ Who does what at runtime:
     Aimer.run    (A, 30 Hz)   -> State.dets + calibration -> link.pan/tilt/laser
     ControlLink  (A, 30 Hz)   -> UDP to the S3
     voice        (B, Pipecat) -> intents (fast point/done/stop) + agent turns (C) -> TTS
+    Watcher      (C, loop 3)  -> event log, "looks done, next step?", knife-near-hand warning (voice mode only)
     Session      (B)          -> "hey Remy" starts, "start over" resets
 Nothing here blocks the event loop: YOLO runs in an executor, frames in their own thread.
 """
@@ -59,11 +60,11 @@ def load_calibration(path: Path = CALIB_PATH) -> Calibration | None:
     return Calibration.load(path)
 
 
-def make_steps(state: State):
-    """C's step machine if it exists yet, else FakeSteps (always advances)."""
+def make_steps(state: State, link=None):
+    """C's step machine (it shows the step on TFT line 2 itself), else FakeSteps (always advances)."""
     try:
-        from .steps import Steps  # type: ignore[attr-defined]
-        return Steps(state)
+        from .steps import Steps
+        return Steps(state, link)
     except (ImportError, TypeError) as e:
         log.info("using FakeSteps (%s)", e.__class__.__name__)
         return FakeSteps(state)
@@ -197,8 +198,9 @@ class App:
         calib = calib if calib is not None else load_calibration()
         closed = bool(getattr(args, "closed_loop", False)) and calib is not None
         aimer = Aimer(link, calib, state, hz=cfg.control_hz, closed_loop=closed)
-        steps = make_steps(state)
-        steps.on_change(lambda n: link.show_text(TFT_STEP, f"Step {n + 1}: {recipe.steps[n].short}"))
+        steps = make_steps(state, link)
+        if isinstance(steps, FakeSteps):
+            steps.on_change(lambda n: link.show_text(TFT_STEP, f"Step {n + 1}: {recipe.steps[n].short}"))
         agent = agent if agent is not None else make_agent(state, aimer, steps, link, args.fake_agent)
         return cls(args, state, frames, link, calib, aimer, steps, agent)
 
@@ -213,6 +215,15 @@ class App:
         from .vision import Detector   # ultralytics, heavy
         detector = Detector(cfg.yolo_weights, cfg.yolo_device, self.state.recipe.objects)
         self._spawn(detect_loop(self.frames, self.state, detector), "yolo")
+
+    def _start_watcher(self) -> None:
+        """C's watcher (loop 3): event log, "step done?" asks, knife-near-hand warning. Needs the voice pipeline."""
+        from .watcher import Watcher
+        w = Watcher(cfg, self.state, self.frames, self.speech, self.steps,
+                    on_ask=self.speech.agent_turn, busy=lambda: self.agent.busy)
+        if hasattr(self.steps, "verdict_provider"):
+            self.steps.verdict_provider = w.latest_verdict     # lets Steps push back on a premature "done"
+        self._spawn(w.run(), "watcher")
 
     def _wire_button(self) -> None:
         """--button: BOOT press starts the session when idle, resets it when active (backup for the wake phrase)."""
@@ -254,6 +265,8 @@ class App:
         worker, self.speech = build_pipeline(cfg, self.agent, self.frames, self.state, actions=actions)
         self.session = Session(self.state, self.speech, self.agent, self.aimer, self.steps, self.link)
         actions.session = self.session
+        if not self.args.no_watcher and not self.args.fake_agent:
+            self._start_watcher()
         if self.args.button:
             self._wire_button()
         print('\n>>> say "hey Remy" to start, "start over" to reset\n', flush=True)
@@ -289,6 +302,7 @@ def parse_args(argv=None):
     ap.add_argument("--say", action="store_true", help="with --type: speak replies with macOS `say`")
     ap.add_argument("--fake-agent", action="store_true", help="echo agent, no API key needed")
     ap.add_argument("--button", action="store_true", help="BOOT button starts/resets the session")
+    ap.add_argument("--no-watcher", action="store_true", help="don't run C's watcher (loop 3)")
     ap.add_argument("--closed-loop", action="store_true",
                     help="stretch: find the real laser dot and correct the aim (needs calibration.json)")
     return ap.parse_args(argv)
