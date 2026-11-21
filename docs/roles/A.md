@@ -156,7 +156,7 @@ Test: open `http://coach-cam.local:81/stream` in a browser on the laptop (on the
 ### 5. Real S3 control firmware (Fri night → Sat AM)
 
 `control_s3.ino` is written but untested. Steps:
-1. Copy `secrets.example.h` to `secrets.h`, fill in the hotspot. Flash (board "ESP32S3 Dev Module", PSRAM OPI).
+1. Copy `secrets.example.h` to `secrets.h`, fill in the hotspot. Flash (board "ESP32S3 Dev Module", PSRAM "QSPI PSRAM" or Disabled: our board is N8R2, not octal).
 2. Test by hand:
    ```bash
    nc -u coach-ctl.local 4210

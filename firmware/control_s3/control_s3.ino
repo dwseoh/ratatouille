@@ -1,7 +1,8 @@
 // ESP32-S3 controller: UDP commands -> pan/tilt servos, laser, TFT. Protocol in docs/protocol.md.
 // Libraries: Adafruit ST7735 and ST7789, Adafruit GFX, ESPmDNS (core). Needs the esp32 board package 3.x.
 // Servos run on the chip's LEDC PWM directly (ESP32Servo fails to build on the newest esp32 package).
-// Board: "ESP32S3 Dev Module", PSRAM: OPI.
+// Board: "ESP32S3 Dev Module". Our board is N8R2: PSRAM "QSPI PSRAM" (or Disabled), Flash Size 8MB.
+// ("OPI PSRAM" on an R2 board prints "octal_psram: PSRAM chip is not connected".)
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>

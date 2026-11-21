@@ -5,7 +5,7 @@
 | Part | Status | Notes |
 |---|---|---|
 | Freenove ESP32 WROVER CAM (5.7×2.8 cm) | have | Onboard USB, no programmer needed |
-| ESP32-S3 N16R8 dev board (dual USB-C) | have | Flash via the COM port. Avoid GPIO 35-37 (octal PSRAM). |
+| ESP32-S3 **N8R2** dev board (dual USB-C) | have | 8 MB flash, 2 MB quad PSRAM. Arduino: PSRAM "QSPI PSRAM" (or Disabled), Flash Size 8MB. Flash via the COM port. |
 | Mini pan-tilt kit, assembled, 2× SG90 | buying | Get 2× MG90S spares (metal gears) |
 | KY-008 laser 650 nm | have | ≤5 mW. Driven through a 2N2222 low-side switch. |
 | 20000 mAh 22.5 W power bank | have | Main power: its USB-A port → USB-A-to-C cable → USB-C breakout (J1) on the carrier's 5 V rail |

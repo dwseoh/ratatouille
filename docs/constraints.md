@@ -59,8 +59,8 @@ speech runs over Bluetooth. Demo recipe: guacamole.
 |---|---|
 | **Camera board:** Freenove ESP32-WROVER CAM, about 57 × 28 mm (about 64 mm including the antenna overhang), USB-C at one end, PCB antenna at the other. | Stands upright, USB end down, antenna up. |
 | Most camera-board pins are used by the camera and PSRAM. Free: about 13, 14, 32, 33 (avoid strapping pins 0, 2, 12, 15 and PSRAM 16/17). Streaming uses most of the CPU and WiFi. | Our plan keeps servos and laser **off** this board (see §6.1 for the prototype that does the opposite). |
-| **Control board:** ESP32-S3 N16R8 DevKitC clone, dual USB-C, about 64 × 28 mm, headers soldered, 2 × 22 pins at 2.54 mm. | Flash via the COM/UART USB-C port. |
-| On the S3, GPIO 35-37 are used by the octal PSRAM. GPIO 0, 3, 45 and 46 are strapping pins. | Used pins: 4 pan, 5 tilt, 6 laser, 7 TFT backlight, 8 TFT reset, 9 TFT DC, 10 TFT CS, 11 TFT MOSI, 12 TFT SCK, and 1 for the optional battery divider. |
+| **Control board:** ESP32-S3 **N8R2** DevKitC clone (8 MB flash, 2 MB quad PSRAM: Arduino PSRAM setting "QSPI PSRAM" or Disabled, not OPI), dual USB-C, about 64 × 28 mm, headers soldered, 2 × 22 pins at 2.54 mm. | Flash via the COM/UART USB-C port. |
+| On R8 (octal PSRAM) S3 boards GPIO 35-37 are taken; ours is R2, but we don't use them anyway. GPIO 0, 3, 45 and 46 are strapping pins. | Used pins: 4 pan, 5 tilt, 6 laser, 7 TFT backlight, 8 TFT reset, 9 TFT DC, 10 TFT CS, 11 TFT MOSI, 12 TFT SCK, and 1 for the optional battery divider. |
 | ESP logic is 3.3 V. | SG90 signal inputs and the 2N2222 base accept 3.3 V, so no level shifters are needed. |
 | The two ESPs never talk to each other. | The laptop is the star hub. ESP-NOW is the fallback only if that's ever needed. |
 
