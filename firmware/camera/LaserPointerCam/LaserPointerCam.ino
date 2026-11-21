@@ -1,53 +1,43 @@
 /*
-  LaserPointerCam.ino  -  Freenove ESP32-WROVER (CAM) firmware
-  -------------------------------------------------------------
-  Job of this board:
-    1. Stream camera video (MJPEG)  ->  http://<ip>:81/stream
-    2. Receive pan/tilt/laser commands over UDP port 4210
-       Format (ASCII):  "<pan_deg>,<tilt_deg>,<laser 0|1>\n"   e.g. "92.5,80.0,1"
-    3. Drive the two servos (slew-limited) and the laser enable pin.
-    4. Fail-safe: laser turns OFF if no command arrives for 1 s.
+  LaserPointerCam.ino  -  Freenove ESP32-WROVER CAM firmware: camera streaming ONLY
+  -------------------------------------------------------------------------------
+  Streams MJPEG to the laptop:  http://coach-cam.local:81/stream  (or http://<ip>:81/stream)
+  That's all this board does. The servos and the laser are on the ESP32-S3 (firmware/control_s3,
+  docs/hardware.md). YOLO, the dot finder and aiming run on the laptop.
 
-  The heavy vision work (finding the target and the laser dot) runs on a
-  laptop with host/laser_tracker.py. The ESP32 alone does not have the
-  compute for real object detection.
+  Serial (115200): boot progress, the stream line every 2 s while a client is connected
+    [stream] 12.0 fps | capture 5 ms | send 70 ms | 8 KB/frame | 96 KB/s | RSSI -45 dBm
+  and a heap/PSRAM line every 5 s (should stay flat). "cam_hal: FB-OVF" = a frame was dropped because
+  every buffer was busy; harmless unless the fps in the stream line drops.
+
+  ONE client at a time: while a browser tab shows the stream, the laptop app can't get it.
 
   Arduino IDE settings (same as Freenove Chapter 6):
     Board: "ESP32 Wrover Module"   PSRAM: Enabled
     Partition scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
-  Works with arduino-esp32 core 2.x and 3.x. No extra libraries needed.
+  Wi-Fi: copy secrets.example.h to secrets.h (gitignored) and fill in the phone hotspot.
 */
 
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include <WiFi.h>
-#include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
-// ---------------- USER SETTINGS ----------------
-// Phone/laptop hotspot (2.4 GHz)
-#include "secrets.h"   // WIFI_SSID, WIFI_PASS (copy secrets.example.h; gitignored)
+#include "secrets.h"   // WIFI_SSID, WIFI_PASS
 const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 
-// Pins NOT used by the camera (see Freenove "Cam Pin" table).
-// Avoid 0, 2, 12, 15 (strapping pins) and 16/17 (PSRAM).
-#define PAN_PIN    32
-#define TILT_PIN   33
-#define LASER_PIN  13      // drives a transistor/MOSFET, NOT the laser directly
+// ---------- camera settings ----------
+// This board's sensor is an OV3660 (not the OV2640 the docs assume).
+// Settings = Freenove's Sketch_06.1_CameraWebServer, which streams cleanly on this board. With 20 MHz /
+// 2 buffers / GRAB_LATEST the old sketch got corrupted, banded JPEGs and 3-4 s per frame.
+// Change ONE thing at a time from here, and keep a setting only if the [stream] line stays healthy.
+#define XCLK_HZ      10000000
+#define FRAME_SIZE   FRAMESIZE_QVGA   // 320x240. Next to try: FRAMESIZE_HVGA (480x320)
+#define FB_COUNT     1
+#define GRAB_MODE    CAMERA_GRAB_WHEN_EMPTY
+#define JPEG_QUALITY 12               // lower number = better image, bigger frames
 
-#define PAN_MIN   0.0f     // mechanical limits of YOUR gimbal (degrees)
-#define PAN_MAX   180.0f
-#define TILT_MIN  30.0f    // keep the laser from pointing up toward faces
-#define TILT_MAX  150.0f
-#define SERVO_MIN_US 500   // check your servo datasheet (SG90 ~500-2400)
-#define SERVO_MAX_US 2400
-#define MAX_SLEW_DEG_PER_TICK 1.5f   // smoothing; tick = 10 ms
-#define CMD_TIMEOUT_MS 1000
-#define UDP_PORT 4210
-// ------------------------------------------------
-
-// Camera model: CAMERA_MODEL_WROVER_KIT (Freenove ESP32-WROVER CAM)
-#define CAMERA_MODEL_WROVER_KIT
+// Camera pins: CAMERA_MODEL_WROVER_KIT (Freenove ESP32-WROVER CAM)
 #define PWDN_GPIO_NUM  -1
 #define RESET_GPIO_NUM -1
 #define XCLK_GPIO_NUM  21
@@ -65,62 +55,9 @@ const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 #define HREF_GPIO_NUM  23
 #define PCLK_GPIO_NUM  22
 
-// Camera XCLK uses LEDC channel 0 / timer 0.
-// Servos use channels 2 and 3 (timer 1) so they never fight the camera clock.
-#define PAN_CH   2
-#define TILT_CH  3
-#define PWM_FREQ 50
-#define PWM_RES  16
-
-WiFiUDP udp;
 httpd_handle_t streamHttpd = NULL;
 
-volatile float targetPan = 90, targetTilt = 90;
-float curPan = 90, curTilt = 90;
-volatile bool laserReq = false;
-unsigned long lastCmdMs = 0;
-
-// ---------- servo helpers ----------
-static uint32_t angleToDuty(float deg) {
-  float us = SERVO_MIN_US + (deg / 180.0f) * (SERVO_MAX_US - SERVO_MIN_US);
-  return (uint32_t)(us * ((1 << PWM_RES) - 1) / (1000000.0f / PWM_FREQ));
-}
-
-static void servoAttach(int pin, int ch) {
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcAttachChannel(pin, PWM_FREQ, PWM_RES, ch);
-#else
-  ledcSetup(ch, PWM_FREQ, PWM_RES);
-  ledcAttachPin(pin, ch);
-#endif
-}
-
-static void servoWrite(int pin, int ch, float deg) {
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcWrite(pin, angleToDuty(deg));
-#else
-  ledcWrite(ch, angleToDuty(deg));
-#endif
-}
-
-static float approach(float cur, float tgt, float step) {
-  if (tgt > cur + step) return cur + step;
-  if (tgt < cur - step) return cur - step;
-  return tgt;
-}
-
 // ---------- camera ----------
-// This board's sensor is an OV3660 (the stock CameraWebServer page says so), not the OV2640 the docs assume.
-// Measured 2026-11-21 with the stock example on this board, phone hotspot, laptop pulling :81/stream:
-//   XCLK 10 MHz, any size  -> camera fails (no frames).   <- what stalled this sketch before
-//   XCLK 20 MHz: QVGA 320x240 ~11 fps | CIF 400x296 ~10.5 fps | HVGA 480x320 ~12 fps | VGA 640x480 fails
-// So: 20 MHz, HVGA. Calibrate the aim at this size (calibration is in pixels).
-#define XCLK_HZ      20000000
-#define FRAME_SIZE   FRAMESIZE_HVGA   // 480x320. Fallback: FRAMESIZE_QVGA
-#define FB_COUNT     2                // as the stock example (PSRAM + GRAB_LATEST)
-// JPEG quality: lower number = better image, bigger frames. ~8 KB/frame at HVGA q10-12.
-#define JPEG_QUALITY 12
-
 static bool cameraInit() {
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0;
@@ -133,17 +70,14 @@ static bool cameraInit() {
   c.pin_vsync = VSYNC_GPIO_NUM; c.pin_href  = HREF_GPIO_NUM;
   c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
   c.pin_pwdn = PWDN_GPIO_NUM;   c.pin_reset = RESET_GPIO_NUM;
-  // NOT 10 MHz: the OV3660 delivers no frames at 10 MHz (that was the stall). FB-OVF lines are harmless.
   c.xclk_freq_hz = XCLK_HZ;
   c.pixel_format = PIXFORMAT_JPEG;
   c.frame_size   = FRAME_SIZE;
   c.jpeg_quality = JPEG_QUALITY;
   if (psramFound()) {
-    // "cam_hal: FB-OVF" = the sensor finished a frame while every buffer was busy (one being sent over
-    // Wi-Fi), so that frame was dropped. Harmless with GRAB_LATEST; judge by the [stream] fps line.
     c.fb_count    = FB_COUNT;
     c.fb_location = CAMERA_FB_IN_PSRAM;
-    c.grab_mode   = CAMERA_GRAB_LATEST; // drop stale frames, lowest latency
+    c.grab_mode   = GRAB_MODE;
   } else {
     Serial.println("WARNING: no PSRAM - using 1 frame buffer in DRAM");
     c.fb_count    = 1;
@@ -155,11 +89,14 @@ static bool cameraInit() {
   sensor_t *s = esp_camera_sensor_get();
   Serial.printf("[boot] sensor PID 0x%04x (%s)\n", s->id.PID,
                 s->id.PID == OV3660_PID ? "OV3660" : s->id.PID == OV2640_PID ? "OV2640" : "other");
-  s->set_vflip(s, 1);   // matches Freenove example orientation
-  if (s->id.PID == OV3660_PID) {        // same tweaks as the stock CameraWebServer
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
+  if (s->id.PID == OV3660_PID) {        // orientation as Freenove's sketch for this sensor
+    s->set_hmirror(s, 1);
+    s->set_vflip(s, 0);
+  } else {
+    s->set_hmirror(s, 1);
+    s->set_vflip(s, 1);
   }
+  s->set_brightness(s, 1);
   s->set_framesize(s, FRAME_SIZE);
   s->set_quality(s, JPEG_QUALITY);
   // Tip: if the laser dot washes out, lower exposure a bit:
@@ -207,7 +144,7 @@ static esp_err_t streamHandler(httpd_req_t *req) {
                     (unsigned long)(statBytes / statN / 1024), statBytes / 1024.0f / secs, WiFi.RSSI());
       statN = statGetMs = statSendMs = statBytes = 0; statT0 = millis();
     }
-    delay(1);                 // yield so Wi-Fi/UDP tasks get CPU time
+    delay(1);                 // yield so the Wi-Fi task gets CPU time
   }
   Serial.printf("[stream] client gone after %u frames\n", (unsigned)frames);
   return ESP_OK;
@@ -230,42 +167,17 @@ static void startStreamServer() {
     httpd_register_uri_handler(streamHttpd, &uri);
 }
 
-// ---------- UDP commands ----------
-static void pollUdp() {
-  int n = udp.parsePacket();
-  if (n <= 0) return;
-  char buf[64];
-  int len = udp.read(buf, sizeof(buf) - 1);
-  if (len <= 0) return;
-  buf[len] = 0;
-  float p, t; int l;
-  if (sscanf(buf, "%f,%f,%d", &p, &t, &l) == 3) {
-    targetPan  = constrain(p, PAN_MIN, PAN_MAX);
-    targetTilt = constrain(t, TILT_MIN, TILT_MAX);
-    laserReq   = (l != 0);
-    lastCmdMs  = millis();
-  }
-}
-
 void setup() {
   Serial.begin(115200);
   delay(500);                             // let the serial monitor catch the first lines
   Serial.printf("\n[boot] camera board starting (PSRAM %s, %u bytes)\n",
                 psramFound() ? "found" : "NOT found", (unsigned)ESP.getPsramSize());
-  pinMode(LASER_PIN, OUTPUT);
-  digitalWrite(LASER_PIN, LOW);           // laser OFF at boot
 
   if (!cameraInit()) {
     Serial.println("Camera init failed - check PSRAM enabled / board selection");
     while (true) delay(1000);
   }
   Serial.println("[boot] camera OK");
-
-  servoAttach(PAN_PIN, PAN_CH);
-  servoAttach(TILT_PIN, TILT_CH);
-  servoWrite(PAN_PIN, PAN_CH, curPan);
-  servoWrite(TILT_PIN, TILT_CH, curTilt);
-  Serial.println("[boot] servos OK");
 
   Serial.printf("[boot] joining WiFi \"%s\" (dots = still trying)\n", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -278,25 +190,12 @@ void setup() {
   } else {
     Serial.println("\nmDNS failed - use the IP below");
   }
-  Serial.printf("\nStream: http://%s:81/stream (IP fallback)   UDP cmd port: %d\n",
-                WiFi.localIP().toString().c_str(), UDP_PORT);
+  Serial.printf("\nStream: http://%s:81/stream (IP fallback)\n", WiFi.localIP().toString().c_str());
 
   startStreamServer();
-  udp.begin(UDP_PORT);
 }
 
 void loop() {
-  pollUdp();
-
-  static unsigned long lastTick = 0;
-  if (millis() - lastTick >= 10) {        // 100 Hz servo update
-    lastTick = millis();
-    curPan  = approach(curPan,  targetPan,  MAX_SLEW_DEG_PER_TICK);
-    curTilt = approach(curTilt, targetTilt, MAX_SLEW_DEG_PER_TICK);
-    servoWrite(PAN_PIN, PAN_CH, curPan);
-    servoWrite(TILT_PIN, TILT_CH, curTilt);
-  }
-
   // Leak check: these numbers should stay flat over minutes of streaming.
   static unsigned long lastMem = 0;
   if (millis() - lastMem > 5000) {
@@ -304,7 +203,5 @@ void loop() {
     Serial.printf("heap free %u  min %u | psram free %u\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getFreePsram());
   }
-
-  bool alive = (millis() - lastCmdMs) < CMD_TIMEOUT_MS;
-  digitalWrite(LASER_PIN, (laserReq && alive) ? HIGH : LOW);
+  delay(10);                              // nothing else to do: don't spin the CPU
 }
