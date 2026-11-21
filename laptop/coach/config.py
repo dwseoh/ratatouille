@@ -26,6 +26,11 @@ class Config:
     frames_per_turn: int = 3          # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending
 
+    # Voice (V1). Deepgram streaming STT + Aura TTS through Pipecat.
+    deepgram_api_key: str = _env("DEEPGRAM_API_KEY", "")
+    tts_voice: str = _env("TTS_VOICE", "aura-2-helena-en")
+    vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.8"))   # silence before a turn ends
+
     yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
     yolo_device: str = _env("YOLO_DEVICE", "mps")   # M2 GPU
     recipe_path: str = _env("RECIPE", "recipes/guacamole.json")

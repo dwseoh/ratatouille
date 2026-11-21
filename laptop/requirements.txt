@@ -6,3 +6,6 @@ python-dotenv
 sounddevice
 fastapi
 uvicorn
+pipecat-ai[deepgram,silero,local]==1.16.0  # needs `brew install portaudio`; use Python 3.12 (3.14 untested)
+pytest
+pytest-timeout
