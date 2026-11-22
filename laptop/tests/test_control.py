@@ -148,3 +148,35 @@ def test_unresolvable_host_does_not_crash():
         link.show_text(0, "x")
         link.close()
     asyncio.run(run())
+
+
+def test_ramp_limits_each_packet_and_reports_moving():
+    """Big jumps are spread over several packets (no current spike), then `moving` goes False."""
+    import asyncio
+    from coach.control import MAX_STEP_DEG, ControlLink, _ramp
+
+    assert _ramp(90, 91) == 91 and _ramp(90, 150) == 90 + MAX_STEP_DEG and _ramp(90, 30) == 90 - MAX_STEP_DEG
+
+    class Tx:
+        def __init__(self): self.sent = []
+        def sendto(self, data, addr): self.sent.append(data.decode())
+
+    async def go():
+        link = ControlLink("127.0.0.1", 9, hz=200)
+        link._transport, link._addr, link._resolved_at = Tx(), ("127.0.0.1", 9), 1e18
+        link.status.at = 1e18                       # pretend online: no re-resolve
+        link.pan, link.tilt = 150.0, 30.0
+        assert link.moving
+        task = asyncio.create_task(link._pump())
+        await asyncio.sleep(0.4)
+        task.cancel()
+        return link, [m for m in link._transport.sent if m.startswith("C ")]
+
+    link, cs = asyncio.run(go())
+    pans = [float(m.split()[1]) for m in cs]
+    tilts = [float(m.split()[2]) for m in cs]
+    steps = [abs(b - a) for a, b in zip([90.0] + pans, pans)] + [abs(b - a) for a, b in zip([60.0] + tilts, tilts)]
+    assert max(steps) <= MAX_STEP_DEG + 1e-9
+    assert pans[-1] == 150.0 and tilts[-1] == 30.0 and not link.moving
+    link.reset()
+    assert (link._out_pan, link._out_tilt) == (90.0, 60.0) and not link.moving

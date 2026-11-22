@@ -107,6 +107,9 @@ class CalibWeb:
 
     @property
     def settled(self) -> bool:
+        if getattr(self.link, "moving", False):     # servos still ramping: settle time starts on arrival
+            self.moved_at = self.clock()
+            return False
         return self.clock() - self.moved_at >= self.settle_s
 
     def click(self, x: float, y: float) -> None:

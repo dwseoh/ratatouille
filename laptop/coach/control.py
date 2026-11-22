@@ -12,6 +12,14 @@ from typing import Callable
 SAFE_PAN, SAFE_TILT = 90.0, 60.0
 ONLINE_S = 1.0          # online = an S arrived in the last second
 RERESOLVE_S = 5.0       # offline this long -> resolve CTL_HOST again (mDNS can change IP)
+MAX_STEP_DEG = 2.0      # per 30 Hz packet = 60 deg/s. The S3 jumps straight to whatever angle it gets, and two
+                        # servos jumping at once pull a current spike that can brown out the S3 (it reboots and
+                        # rejoins WiFi). Ramping here keeps every move smooth without a firmware change.
+
+
+def _ramp(cur: float, goal: float, step: float = MAX_STEP_DEG) -> float:
+    d = float(goal) - cur
+    return float(goal) if abs(d) <= step else cur + (step if d > 0 else -step)
 
 
 @dataclass
@@ -29,7 +37,8 @@ class CtlStatus:
 class ControlLink(asyncio.DatagramProtocol):
     def __init__(self, host: str, port: int = 4210, hz: float = 30.0):
         self.host, self.port, self.period = host, port, 1.0 / hz
-        self.pan, self.tilt, self.laser = SAFE_PAN, SAFE_TILT, False
+        self.pan, self.tilt, self.laser = SAFE_PAN, SAFE_TILT, False    # targets (what callers set)
+        self._out_pan, self._out_tilt = SAFE_PAN, SAFE_TILT              # what was last sent (ramps to target)
         self.status = CtlStatus()
         self._seq = 0
         self._transport = None
@@ -44,6 +53,11 @@ class ControlLink(asyncio.DatagramProtocol):
     def online(self) -> bool:
         return time.time() - self.status.at < ONLINE_S
 
+    @property
+    def moving(self) -> bool:
+        """True while the sent angles are still ramping towards pan/tilt (not in ControlLinkAPI)."""
+        return abs(self._out_pan - self.pan) > 0.05 or abs(self._out_tilt - self.tilt) > 0.05
+
     def show_text(self, line: int, text: str) -> None:
         """Put up to 20 chars on display line 0-4."""
         self._send(f"T {int(line)} {str(text).replace(chr(10), ' ')[:20]}")
@@ -51,6 +65,7 @@ class ControlLink(asyncio.DatagramProtocol):
     def reset(self) -> None:
         """Laser off, servos centred. Also resets our own state so the next C doesn't undo it."""
         self.pan, self.tilt, self.laser = SAFE_PAN, SAFE_TILT, False
+        self._out_pan, self._out_tilt = SAFE_PAN, SAFE_TILT              # the S3 snaps to centre on R
         self._send("R")
 
     def on_button(self, cb: Callable[[], None]) -> None:
@@ -84,7 +99,9 @@ class ControlLink(asyncio.DatagramProtocol):
     async def _pump(self):
         while True:
             self._seq += 1
-            self._send(f"C {self.pan:.1f} {self.tilt:.1f} {int(bool(self.laser))} {self._seq}")
+            self._out_pan = _ramp(self._out_pan, self.pan)
+            self._out_tilt = _ramp(self._out_tilt, self.tilt)
+            self._send(f"C {self._out_pan:.1f} {self._out_tilt:.1f} {int(bool(self.laser))} {self._seq}")
             now = time.time()
             if (not self._resolving and now - self.status.at > RERESOLVE_S
                     and now - self._resolved_at > RERESOLVE_S):

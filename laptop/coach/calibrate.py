@@ -151,6 +151,8 @@ async def auto_sweep(link: ControlLinkAPI, frames: FrameSource, grid: list[tuple
     while not sess.done:
         pan, tilt = sess.current()
         link.pan, link.tilt = pan, tilt
+        while getattr(link, "moving", False):   # ControlLink ramps the servos; wait until they arrive
+            await sleep(0.05)
         await sleep(max(settle_s, lag_s))
         p = None
         for k in range(tries):
@@ -191,9 +193,9 @@ async def _main(args) -> None:
     from .control import ControlLink
     from .frames import FrameGrabber
 
-    cam = CONFIG.cam_url
+    cam = args.cam or CONFIG.cam_url
     frames = FrameGrabber(int(cam) if str(cam).isdigit() else cam).start()
-    link = await ControlLink(CONFIG.ctl_host, CONFIG.ctl_port).start()
+    link = await ControlLink(args.ctl or CONFIG.ctl_host, CONFIG.ctl_port).start()
     out = Path(args.out)
     if args.auto:
         try:
@@ -224,6 +226,8 @@ async def _main(args) -> None:
             if not test_mode and goal is not None and goal != last_goal:
                 link.pan, link.tilt = goal
                 moved_at, last_goal = time.monotonic(), goal
+            if getattr(link, "moving", False):      # servos still ramping: settle time starts on arrival
+                moved_at = time.monotonic()
             settled = time.monotonic() - moved_at >= args.settle_ms / 1000
 
             frame, _ = frames.latest()
@@ -295,6 +299,8 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_grid_args(ap)
     ap.add_argument("--auto", action="store_true", help="find the dot automatically (dot finder + blink check)")
+    ap.add_argument("--cam", default=None, help="camera URL (default CAM_URL from laptop/.env)")
+    ap.add_argument("--ctl", default=None, help="S3 IP or host (default CTL_HOST from laptop/.env)")
     args = ap.parse_args(argv)
     if args.settle_ms is None:
         args.settle_ms = (AUTO_SETTLE_S if args.auto else SETTLE_S) * 1000

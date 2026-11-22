@@ -14,6 +14,9 @@ async def main(host: str = "127.0.0.1", port: int = 4210, hold: float = 10.0):
     link = await ControlLink(host, port).start()
     link.on_button(lambda: print("BUTTON", flush=True))
     link.show_text(2, "sweep test")
+    link.pan = 60                                   # glide to the start first (ControlLink ramps big moves)
+    while getattr(link, "moving", False):
+        await asyncio.sleep(0.05)
     for pan in list(range(60, 121, 5)) + list(range(120, 59, -5)):
         link.pan, link.laser = pan, True
         await asyncio.sleep(0.1)
