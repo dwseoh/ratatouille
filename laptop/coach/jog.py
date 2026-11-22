@@ -11,7 +11,7 @@ Keys (click the window first):
     m       mark this spot          q       quit (laser off)
 
 Uses CAM_URL / CTL_HOST / CAM_ROTATE from laptop/.env, or --cam / --ctl.
-Tilt is clamped to the firmware's 20-100 and pan to 10-170. Keep faces out of the beam.
+Angles are limited by PAN_MIN/PAN_MAX/TILT_MIN/TILT_MAX in laptop/.env (default 0-180). Keep faces out of the beam.
 """
 from __future__ import annotations
 
@@ -19,7 +19,12 @@ import argparse
 import asyncio
 from dataclasses import dataclass, field
 
-PAN_LIM, TILT_LIM = (10.0, 170.0), (20.0, 100.0)   # same as control_s3.ino
+def _limits():
+    from .config import CONFIG
+    return (CONFIG.pan_min, CONFIG.pan_max), (CONFIG.tilt_min, CONFIG.tilt_max)
+
+
+PAN_LIM, TILT_LIM = _limits()     # PAN_* / TILT_* from laptop/.env, default 0-180 (the firmware's full range)
 KEYS = {"a": (-2, 0), "d": (2, 0), "A": (-10, 0), "D": (10, 0),
         "s": (0, -2), "w": (0, 2), "S": (0, -10), "W": (0, 10)}
 

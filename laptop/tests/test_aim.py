@@ -95,11 +95,20 @@ def box_at(name, cx, cy):
     return Det(name, 0.9, (cx - 10, cy - 10, cx + 10, cy + 10))
 
 
+LIMITS = (10.0, 170.0, 20.0, 100.0)     # explicit limits so the clamp tests don't depend on laptop/.env
+
+
+def test_limits_default_to_config_full_range():
+    a = Aimer(SpyLink(), None, State(RECIPE, dets=fake_dets()))
+    from coach.config import CONFIG
+    assert (a.PAN_MIN, a.PAN_MAX, a.TILT_MIN, a.TILT_MAX) == (CONFIG.pan_min, CONFIG.pan_max, CONFIG.tilt_min, CONFIG.tilt_max)
+
+
 @pytest.fixture
 def rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    aimer = Aimer(link, linear_calib(), st, clock=clock)
+    aimer = Aimer(link, linear_calib(), st, clock=clock, limits=LIMITS)
     return aimer, link, st, clock
 
 
@@ -174,7 +183,7 @@ def test_clamp_tilt(rig):
     aimer.calib = Calibration().fit(grid_pixels(), [(90.0, 150.0)] * 25)   # a bad fit: tilt 150 (aims up)
     aimer.point_at("lime")
     run_ticks(aimer, clock, 60)
-    assert link.tilt == pytest.approx(Aimer.TILT_MAX) and aimer.on_target
+    assert link.tilt == pytest.approx(aimer.TILT_MAX) and aimer.on_target
 
 
 def test_follows_moving_target(rig):
@@ -320,7 +329,7 @@ def dot_err(aimer, name="lime", cam=cam_px):
 def cl_rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    return Aimer(link, linear_calib(), st, clock=clock, closed_loop=True), link, st, clock
+    return Aimer(link, linear_calib(), st, clock=clock, closed_loop=True, limits=LIMITS), link, st, clock
 
 
 def test_closed_loop_off_by_default(rig):
@@ -381,7 +390,7 @@ def test_closed_loop_trim_limited_and_pan_clamped(cl_rig):
     for _ in range(150):
         cl_ticks(aimer, clock, 1, cam=lambda p, t: (0.0, 0.0))    # a bad detection stuck in the corner
         assert abs(link.pan - prev[0]) <= 4.0 + 1e-9 and abs(link.tilt - prev[1]) <= 4.0 + 1e-9
-        assert Aimer.PAN_MIN <= link.pan <= Aimer.PAN_MAX
+        assert aimer.PAN_MIN <= link.pan <= aimer.PAN_MAX
         prev = (link.pan, link.tilt)
     assert aimer.trim == pytest.approx((Aimer.CL_MAX_TRIM_DEG, -Aimer.CL_MAX_TRIM_DEG))
     assert link.pan == pytest.approx(170.0) and not aimer.on_target

@@ -5,9 +5,10 @@ def test_keys_move_clamp_and_quit():
     j = Jog()
     j.key("d"); j.key("w")
     assert (j.pan, j.tilt) == (92, 62)
-    for _ in range(20):
+    from coach.jog import TILT_LIM
+    for _ in range(40):
         j.key("W")
-    assert j.tilt == 100                     # firmware clamp
+    assert j.tilt == TILT_LIM[1]             # clamped to TILT_MAX (laptop/.env, default 180)
     j.key("c")
     assert (j.pan, j.tilt) == (90, 60)
     j.key("l")

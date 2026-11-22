@@ -79,8 +79,9 @@ class Calibration:
 class Aimer:
     """Implements AimerAPI. Call point_at()/laser_off() from the asyncio loop; run() is the control loop."""
 
-    PAN_MIN, PAN_MAX = 10.0, 170.0
-    TILT_MIN, TILT_MAX = 20.0, 100.0   # same as control_s3.ino: a second guard so a bad fit never aims up
+    # Servo limits: per instance, from PAN_MIN / PAN_MAX / TILT_MIN / TILT_MAX in laptop/.env (default 0-180,
+    # the firmware's full range). Set TILT_* once the level angle is known: it stops a bad fit aiming up.
+    PAN_MIN, PAN_MAX, TILT_MIN, TILT_MAX = 0.0, 180.0, 0.0, 180.0
     MAX_STEP_DEG = 4.0      # rate limit per tick
     DEADBAND_DEG = 0.5      # don't send changes smaller than this (servo buzz)
     SMOOTH_N = 3            # mean of the last N target centres
@@ -97,8 +98,13 @@ class Aimer:
     SIGN_GROW_PX = 3.0      # an axis error grew by more than this after a nudge -> flip that axis (once per target)
 
     def __init__(self, link: ControlLinkAPI, calib: Calibration | None, state: State,
-                 hz: float = 30.0, clock: Callable[[], float] = time.monotonic, closed_loop: bool = False):
+                 hz: float = 30.0, clock: Callable[[], float] = time.monotonic, closed_loop: bool = False,
+                 limits: tuple[float, float, float, float] | None = None):
         self.link, self.calib, self.state, self.hz, self.clock = link, calib, state, hz, clock
+        if limits is None:
+            from .config import CONFIG
+            limits = (CONFIG.pan_min, CONFIG.pan_max, CONFIG.tilt_min, CONFIG.tilt_max)
+        self.PAN_MIN, self.PAN_MAX, self.TILT_MIN, self.TILT_MAX = map(float, limits)
         self.closed_loop = closed_loop
         self.target: str | None = None
         self.on_target = False

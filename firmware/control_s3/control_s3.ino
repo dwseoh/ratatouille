@@ -20,8 +20,10 @@ const int LINE_CHARS = 20;  // text size 2 = 12 px per char, 240 px wide
 const uint16_t UDP_PORT = 4210;
 const uint32_t WATCHDOG_MS = 500;       // no control packet -> laser off
 const uint32_t STATUS_EVERY_MS = 200;
-const float PAN_MIN = 10, PAN_MAX = 170;
-const float TILT_MIN = 20, TILT_MAX = 100;  // TODO: set after mounting so the beam never goes above horizontal
+// Full servo range. The laptop enforces the real limits (PAN_* / TILT_* in laptop/.env), so they can change
+// without a reflash. Once the level angle is measured, consider narrowing TILT_* here too as a hard guard.
+const float PAN_MIN = 0, PAN_MAX = 180;
+const float TILT_MIN = 0, TILT_MAX = 180;
 
 // Minimal servo driver on LEDC (esp32 3.x API). Microseconds give sub-degree steps.
 struct LedcServo {

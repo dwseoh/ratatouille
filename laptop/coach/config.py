@@ -19,6 +19,13 @@ class Config:
     # Turn every camera frame before anything sees it: 0, 90, 180, 270, vflip or hflip.
     # Upside down as mounted -> 180. Recalibrate after changing it.
     cam_rotate: str = _env("CAM_ROTATE", "0")
+    # Servo limits the laptop enforces (degrees). The S3 firmware allows the full 0-180, so THESE are the
+    # safety limit: once you know the tilt angle where the beam is level, set TILT_MIN / TILT_MAX here
+    # (laptop/.env) so the beam can never point above horizontal. No reflash needed.
+    pan_min: float = float(_env("PAN_MIN", "0"))
+    pan_max: float = float(_env("PAN_MAX", "180"))
+    tilt_min: float = float(_env("TILT_MIN", "0"))
+    tilt_max: float = float(_env("TILT_MAX", "180"))
     ctl_host: str = _env("CTL_HOST", "coach-ctl.local")
     ctl_port: int = int(_env("CTL_PORT", "4210"))
     control_hz: float = 30.0
