@@ -203,7 +203,8 @@ def test_verify_measures_then_adds_points(rig, monkeypatch):
         x, y = cam(link.pan, link.tilt)
         s = c.post("/click", json={"x": x + 3, "y": y}).json()             # the dot lands 3 px right
     v = s["verify"]
-    assert v["done"] and v["stats"]["n"] == calibrate.VERIFY_N and v["stats"]["mean_deg"] == pytest.approx(3 / 8, abs=0.01)
+    assert v["done"] and v["stats"]["n"] == calibrate.VERIFY_N
+    assert v["stats"]["mean_deg"] == pytest.approx(3 / 8, abs=0.01)
     assert any(ln.startswith("VERIFY:") for ln in s["log"]) and not link.laser
     s = c.post("/verify_add").json()
     assert s["saved"] and s["n_points"] == 16 + calibrate.VERIFY_N

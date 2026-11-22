@@ -1,8 +1,8 @@
 """Calibration in the browser: python -m coach.calib_web   (run from laptop/, then open http://127.0.0.1:8001)
 
-Same steps as coach.calibrate, same calibration.json: live camera frame, the servos visit the grid (5x5, each point
-approached from below), you click the laser dot on the image (s skip, r redo, t test mode, Save). A click near the dot
-snaps to its centre; clicks only count once the servos stopped and a newer frame is on screen. "Auto" runs
+Same steps as coach.calibrate, same calibration.json: live camera frame, the servos visit the grid (5x5, every point
+approached the same way: pan from below, tilt from above), you click the laser dot on the image (s skip, r redo,
+t test mode, Save). A click near the dot snaps to its centre; clicks only count once the servos stopped and a newer frame is on screen. "Auto" runs
 calibrate --auto's dot finder + blink check instead of clicks. "Verify" sends the laser to random spots and measures
 where the dot lands (click it, or "Auto verify" finds it), printing the error in degrees and cm; "Add verify points"
 refits with them. All the logic (grid, session, fit + save gate, auto sweep, verify) comes from calibrate.py.
@@ -120,7 +120,7 @@ class CalibWeb:
         else:
             goal = self.sess.current() if self.sess else None
         if goal is not None:
-            self.mover.go(goal)         # from below on both axes, like the Aimer (servo backlash)
+            self.mover.go(goal)         # same approach direction as the Aimer (servo backlash)
             self.moved_at = self.clock()
 
     @property

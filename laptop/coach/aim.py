@@ -244,7 +244,8 @@ class Calibration:
             if not cv:
                 continue
             loo = cv.get("loo")
-            loo_s = f", leave-one-out {loo:.2f} deg (~{self.deg_to_cm(loo, self._centre()):.1f} cm)" if loo is not None else ""
+            loo_s = (f", leave-one-out {loo:.2f} deg (~{self.deg_to_cm(loo, self._centre()):.1f} cm)"
+                     if loo is not None else "")
             used = "  <- used" if k == self.model else ""
             bad = f", {cv['bad']} bad click(s) counted less" if cv.get("bad") else ""
             out.append(f"  {k:5s}: fit {cv['fit']:.2f} deg{loo_s}{bad}{used}")
@@ -586,7 +587,8 @@ class Aimer:
         if (pan, tilt) != (self.link.pan, self.link.tilt) or moving:
             self._moved_at, self._verdict, self._arrived_at = now, None, None
         self.link.pan, self.link.tilt = pan, tilt
-        at = (abs(target[0] - self.link.pan) < self.DEADBAND_DEG and abs(target[1] - self.link.tilt) < self.DEADBAND_DEG)
+        at = (abs(target[0] - self.link.pan) < self.DEADBAND_DEG
+              and abs(target[1] - self.link.tilt) < self.DEADBAND_DEG)
         if not at or moving:
             return False
         if self._via is not None:

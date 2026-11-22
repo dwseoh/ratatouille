@@ -7,9 +7,9 @@ Keys: s = skip point (dot off-screen), r = redo last point, t = test mode (click
 Calibrate at the demo counter distance and posture. Redo only if the camera or pan-tilt moved relative to each other.
 
 Every grid point (and every aim at runtime) is approached the same way (pan from below, tilt from above), so the
-SG90's backlash settles the same way each time. A click is only taken once ControlLink says the servos stopped, the settle time passed and
-a camera frame newer than that is on screen. A click near the dot snaps to the dot's centre (dot finder).
-Both models are fitted (physical "plane" + v1 polynomial, see docs/aiming.md); the one with the lower
+SG90's backlash settles the same way each time. A click is only taken once ControlLink says the servos stopped, the
+settle time passed and a camera frame newer than that is on screen. A click near the dot snaps to the dot's centre
+(dot finder). Both models are fitted (physical "plane" + v1 polynomial, see docs/aiming.md); the one with the lower
 leave-one-out error is used, and both are printed. calibration.json records the frame size and CAM_ROTATE.
 
 --auto (stretch): same grid, no window and no clicks. At each point the dot finder + a blink check
@@ -263,7 +263,8 @@ def finish(sess: CalibSession, out: Path, log: Callable[[str], None] = print, fr
 
 def aim_at_pixel(calib: Calibration, link: ControlLinkAPI, px: tuple[float, float],
                  mover: Mover | None = None) -> tuple[float, float]:
-    """Test mode: point the laser at pixel px with calib (approach from below with a Mover). Returns the angles."""
+    """Test mode: point the laser at pixel px with calib (through a Mover: same approach as the Aimer).
+    Returns the angles."""
     p, t = calib.angles_for(px)
     if not (math.isfinite(p) and math.isfinite(t)):
         return p, t
@@ -439,7 +440,7 @@ async def auto_sweep(link: ControlLinkAPI, frames: FrameSource, grid: list[tuple
     link.laser = True
     while not sess.done:
         pan, tilt = sess.current()
-        mover.go((pan, tilt))           # from below, then wait for ControlLink's ramp + settle
+        mover.go((pan, tilt))           # same approach as the Aimer, then wait for the ramp + settle
         await mover.wait(max(settle_s, lag_s), sleep)
         p = None
         for k in range(tries):
