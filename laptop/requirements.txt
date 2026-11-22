@@ -3,6 +3,7 @@ ultralytics
 opencv-python
 numpy
 python-dotenv
+loguru
 sounddevice
 fastapi
 uvicorn
