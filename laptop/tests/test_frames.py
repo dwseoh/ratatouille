@@ -164,3 +164,29 @@ def test_mjpeg_url_drop_and_recover():
     finally:
         g.stop()
         _kill(srv)
+
+
+def test_rotate_180_and_flip(tmp_path):
+    import cv2
+    import numpy as np
+    from coach.frames import FrameGrabber, frame_transform
+
+    img = np.zeros((48, 64, 3), np.uint8); img[2, 3] = (255, 255, 255)       # one white pixel near top-left
+    assert frame_transform("0") is None and frame_transform(None) is None
+    assert frame_transform("180")(img)[45, 60].tolist() == [255, 255, 255]   # -> near bottom-right
+    assert frame_transform("vflip")(img)[45, 3].tolist() == [255, 255, 255]
+    path = str(tmp_path / "v.avi")
+    w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"), 20, (64, 48))
+    for _ in range(20):
+        f = np.zeros((48, 64, 3), np.uint8); f[:10, :] = 255                  # bright band on top
+        w.write(f)
+    w.release()
+    g = FrameGrabber(path, rotate="180").start()
+    try:
+        t0 = time.time()
+        while g.latest()[0] is None and time.time() - t0 < 5:
+            time.sleep(0.05)
+        f, _ = g.latest()
+        assert f is not None and f[-3:, :].mean() > 200 and f[:3, :].mean() < 50   # band moved to the bottom
+    finally:
+        g.stop()

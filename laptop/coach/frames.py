@@ -21,6 +21,16 @@ BACKOFF_MAX_S = 2.0    # keeps recovery under 3 s after the source comes back
 NET_TIMEOUT_MS = 2000  # open/read timeout for network streams (FFmpeg backend)
 
 
+_XF = {"90": lambda f: cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), "180": lambda f: cv2.rotate(f, cv2.ROTATE_180),
+       "270": lambda f: cv2.rotate(f, cv2.ROTATE_90_COUNTERCLOCKWISE),
+       "vflip": lambda f: cv2.flip(f, 0), "hflip": lambda f: cv2.flip(f, 1)}
+
+
+def frame_transform(spec):
+    """CAM_ROTATE value -> function applied to each frame, or None for "0" / unknown values."""
+    return _XF.get(str(spec).strip().lower()) if spec is not None else None
+
+
 def parse_source(src: int | str) -> int | str:
     """"0" -> 0 (webcam index); anything else is passed to cv2 as-is (file path or URL)."""
     if isinstance(src, str) and src.strip().isdigit():
@@ -29,8 +39,12 @@ def parse_source(src: int | str) -> int | str:
 
 
 class FrameGrabber:
-    def __init__(self, url: int | str, history_every_s: float = 0.5, history_len: int = 8):
+    def __init__(self, url: int | str, history_every_s: float = 0.5, history_len: int = 8, rotate=None):
         self.url = parse_source(url)
+        if rotate is None:                      # default: CAM_ROTATE from laptop/.env
+            from .config import CONFIG
+            rotate = CONFIG.cam_rotate
+        self._xf = frame_transform(rotate)
         self._lock = threading.Lock()
         self._frame = None
         self._ts = 0.0
@@ -106,6 +120,8 @@ class FrameGrabber:
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     break  # stream dropped / file ended -> reconnect
+                if self._xf is not None:
+                    frame = self._xf(frame)
                 now = time.time()
                 with self._lock:
                     self._frame, self._ts = frame, now

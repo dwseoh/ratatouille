@@ -16,6 +16,9 @@ def _env(key: str, default: str) -> str:
 @dataclass(frozen=True)
 class Config:
     cam_url: str = _env("CAM_URL", "http://coach-cam.local:81/stream")
+    # Turn every camera frame before anything sees it: 0, 90, 180, 270, vflip or hflip.
+    # Upside down as mounted -> 180. Recalibrate after changing it.
+    cam_rotate: str = _env("CAM_ROTATE", "0")
     ctl_host: str = _env("CTL_HOST", "coach-ctl.local")
     ctl_port: int = int(_env("CTL_PORT", "4210"))
     control_hz: float = 30.0
