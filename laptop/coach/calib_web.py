@@ -49,6 +49,7 @@ from .calibrate import (
     frame_fresh,
     frame_size,
     make_grid,
+    session_from,
     snap_to_dot,
 )
 from .contracts import ControlLinkAPI, FrameSource
@@ -258,7 +259,7 @@ class CalibWeb:
         if self.verify is None or not self.verify.done:
             raise ValueError("run a verify first")
         if self.sess is None:
-            self.sess = _session_from(self.calib)
+            self.sess = session_from(self.calib)
         n = self.verify.add_to(self.sess)
         self.log(f"added {n} verify points, refitting")
         self.verify = None
@@ -351,14 +352,6 @@ class CalibWeb:
             frame = draw_points(frame, self.sess, self.verify)
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return buf.tobytes() if ok else None
-
-
-def _session_from(calib: Calibration) -> CalibSession:
-    """A finished session holding a saved calibration's points (so verify points can be added and refitted)."""
-    pts = (calib.points or {}) if calib is not None else {}
-    sess = CalibSession([])
-    sess.extra = [(tuple(p), tuple(a)) for p, a in zip(pts.get("px", []), pts.get("angles", []))]
-    return sess
 
 
 def make_router(cw: CalibWeb, prefix: str = "") -> APIRouter:

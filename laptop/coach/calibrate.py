@@ -207,6 +207,14 @@ class CalibSession:
         return self.n_points >= MIN_SAVE_POINTS
 
 
+def session_from(calib: Calibration | None) -> CalibSession:
+    """A finished session holding a saved calibration's points, so verify points can be added and refitted."""
+    pts = (calib.points or {}) if calib is not None else {}
+    sess = CalibSession([])
+    sess.extra = [(tuple(p), tuple(a)) for p, a in zip(pts.get("px", []), pts.get("angles", []))]
+    return sess
+
+
 def fit_and_save(pixels, angles, path=DEFAULT_OUT, warn_deg: float = WARN_DEG, frame=None, rotate=None,
                  model: str = "auto") -> tuple[Calibration, list[str], float]:
     """Fit (both models, robust to a bad click, pick by leave-one-out), save. Returns (calib, report lines, worst).
@@ -547,12 +555,12 @@ async def _main(args) -> None:
     mode = "grid"           # grid | test | verify
     verify: VerifySession | None = None
     saved = False
-    clicks: list[tuple[int, int]] = []
+    clicks: list[tuple[int, int, float]] = []
     last_goal = None
 
     def on_mouse(event, x, y, *_):
         if event == cv2.EVENT_LBUTTONDOWN:
-            clicks.append((x, y))
+            clicks.append((x, y, time.monotonic()))
 
     win = "calibrate (s skip, r redo, t test, v verify, q quit)"
     cv2.namedWindow(win)
@@ -590,13 +598,14 @@ async def _main(args) -> None:
                 cv2.imshow(win, img)
 
             while clicks:
-                x, y = clicks.pop(0)
+                x, y, t_click = clicks.pop(0)
                 if mode == "test":
                     if calib is not None:
                         p, t = aim_at_pixel(calib, link, (x, y), mover)
                         print(f"test: ({x},{y}) -> pan {p:.1f} tilt {t:.1f}")
                     continue
-                if not settled:
+                if not settled or t_click < mover.arrived_at + settle_s:    # made before this point settled
+                    print("still settling: click again once the message says so")
                     continue
                 x, y, snapped = snap_to_dot(frame, x, y)
                 tag = " (snapped to the dot)" if snapped else ""
@@ -609,6 +618,10 @@ async def _main(args) -> None:
                 elif mode == "grid" and goal is not None:
                     sess.click(x, y)
                     print(f"point {sess.i}/{len(sess.grid)}: ({x:.1f},{y:.1f}) -> {goal}{tag}")
+                else:
+                    continue
+                clicks.clear()      # one click per point: a double click must not land on the next point too
+                break
 
             if mode == "grid" and sess.done and not saved:
                 calib = finish(sess, out, frame=frame_size(frames)) or calib
@@ -636,6 +649,9 @@ async def _main(args) -> None:
                 mode, last_goal = "verify", None
                 print(f"verify: {len(verify.targets)} random spots. Click the dot each time (s if not visible).")
             elif key == ord("a") and verify is not None and verify.done:
+                if sess.n_points == 0:          # verifying a saved calibration: refit its points + these
+                    sess = session_from(calib)
+                    saved = True
                 n = verify.add_to(sess)
                 print(f"added {n} verify points, refitting")
                 calib = finish(sess, out, frame=frame_size(frames)) or calib

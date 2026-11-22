@@ -328,3 +328,67 @@ def test_eval_reports_models_and_old_files(real_cal, tmp_path):
     assert any("old file" in ln for ln in out)
     out.clear()
     assert evaluate(tmp_path / "missing.json", log=out.append) is None and "no " in out[0]
+
+
+# ── the cv2 calibration window, driven by a fake window + camera ────────────
+
+def test_click_calibration_window_grid_verify_and_add(tmp_path, monkeypatch):
+    import time
+
+    import cv2
+
+    import coach.calibrate as calibrate
+    import coach.control as control
+    import coach.frames as frames_mod
+
+    def cam(pan, tilt):
+        return (pan - 30) * 8, (90 - tilt) * 8
+
+    link = FakeLink()
+
+    class Link:
+        async def start(self):
+            return link
+
+    class Frames:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            return self
+
+        def stop(self):
+            pass
+
+        def latest(self):
+            img = np.full((480, 640, 3), 60, np.uint8)
+            if link.laser:
+                x, y = (int(round(v)) for v in cam(link.pan, link.tilt))
+                cv2.circle(img, (x, y), 5, (0, 0, 255), -1)
+                cv2.circle(img, (x, y), 2, (255, 255, 255), -1)
+            return img, time.time()
+
+    calls, mouse = [0], {}
+
+    def wait_key(_ms):
+        calls[0] += 1
+        x, y = cam(link.pan, link.tilt)
+        for _ in range(2):                  # a double click, a bit off the dot: one point, snapped to the dot
+            mouse["cb"](cv2.EVENT_LBUTTONDOWN, int(x) + 2, int(y) - 1, 0, None)
+        return {30: ord("v"), 60: ord("a"), 62: ord("q")}.get(calls[0], 255)
+
+    monkeypatch.setattr(control, "ControlLink", lambda *a, **k: Link())
+    monkeypatch.setattr(frames_mod, "FrameGrabber", Frames)
+    monkeypatch.setattr(cv2, "namedWindow", lambda *a, **k: None)
+    monkeypatch.setattr(cv2, "setMouseCallback", lambda win, cb: mouse.update(cb=cb))
+    monkeypatch.setattr(cv2, "imshow", lambda *a: None)
+    monkeypatch.setattr(cv2, "waitKey", wait_key)
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
+    out = tmp_path / "calibration.json"
+    calibrate.main(["-n", "3", "--settle-ms", "0", "--out", str(out), "--pan-min", "60", "--pan-max", "120",
+                    "--tilt-min", "30", "--tilt-max", "70"])
+    d = json.loads(out.read_text())
+    assert d["frame"] == [640, 480] and len(d["points"]["px"]) == 9 + calibrate.VERIFY_N
+    assert not link.laser
+    back = Calibration.load(out)
+    assert back.angles_for(cam(90, 50)) == pytest.approx((90, 50), abs=0.05)   # snapped clicks: exact
