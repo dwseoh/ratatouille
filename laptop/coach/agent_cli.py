@@ -16,6 +16,7 @@ from pathlib import Path
 from .agent import Agent, make_handlers
 from .config import CONFIG as cfg
 from .contracts import FakeAimer, FakeFrames, FakeLink, FakeSpeech, FakeSteps, Recipe, State, fake_dets
+from .timers import Timers
 
 
 async def main() -> None:
@@ -27,13 +28,16 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
     recipe = Recipe.load(Path(__file__).resolve().parent.parent / cfg.recipe_path)
-    st = State(recipe, dets=fake_dets(tuple(args.visible) if args.visible is not None else tuple(recipe.objects)))
+    st = State(recipe, dets=fake_dets(tuple(args.visible) if args.visible is not None else tuple(recipe.objects)),
+               session="active")
     aimer, steps, link, speech = FakeAimer(st), FakeSteps(st), FakeLink(), FakeSpeech(say_aloud=args.say)
     steps.on_change(lambda n: link.show_text(2, f"Step {n + 1}: {recipe.steps[n].short}"))
     source = int(args.webcam) if args.webcam and args.webcam.isdigit() else args.webcam
     frames = FakeFrames(source)
 
-    agent = Agent(cfg, st, make_handlers(st, aimer, steps, link))
+    timers = Timers(st, link)                       # set_timer works here too; "time's up" is printed
+    agent = Agent(cfg, st, make_handlers(st, aimer, steps, link, timers=timers))
+    timer_task = asyncio.create_task(timers.run(speech.say, lambda: not agent.busy))
     print(f"model={cfg.model} effort={cfg.effort} | visible: {', '.join(sorted(st.visible()))}")
     await agent.prewarm()
 
@@ -53,6 +57,7 @@ async def main() -> None:
             print(f"  cache: read {getattr(u, 'cache_read_input_tokens', 0)} / write "
                   f"{getattr(u, 'cache_creation_input_tokens', 0)} / uncached in {getattr(u, 'input_tokens', 0)} tokens")
         print(f"  [step {st.step + 1}/{len(recipe.steps)}] {st.note()}")
+    timer_task.cancel()
 
 
 if __name__ == "__main__":

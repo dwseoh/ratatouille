@@ -28,11 +28,29 @@ ALL = tuple(RECIPE.objects)
 results: list[tuple[str, bool, str]] = []
 
 
-def build(visible=ALL, step=0, client=None):
-    st = State(RECIPE, dets=fake_dets(tuple(visible)))
+def build(visible=ALL, step=0, client=None, timers=None, session=None):
+    st = State(RECIPE, dets=fake_dets(tuple(visible)), session="active")
     st.step = step
     aimer, steps, link = FakeAimer(st), FakeSteps(st), FakeLink()
-    agent = Agent(cfg, st, make_handlers(st, aimer, steps, link), client=client)
+    if timers is True:
+        from coach.timers import Timers
+        timers = Timers(st, link)
+    agent = Agent(cfg, st, make_handlers(st, aimer, steps, link, timers=timers,
+                                         session=(lambda: session_box[0]) if session else None), client=client)
+    session_box = [None]
+    if session:                                 # a real Session (pause/resume) on a do-nothing speech object
+        from coach.session import Session
+
+        class QuietSpeech:
+            speaking = False
+
+            async def say(self, text, priority=None):
+                pass
+
+            def stop(self):
+                pass
+        session_box[0] = Session(st, QuietSpeech(), agent, aimer, steps, link)
+        st.session = "active"
     # These scenarios check BEHAVIOUR, so a slow API moment mustn't turn into a canned line and a false FAIL.
     # Latency fallbacks are checked on purpose by scenario 9 (it sets its own timeout).
     agent.first_token_timeout = 30
@@ -430,12 +448,76 @@ async def s_trust_user_done():
           " | ".join(sink.sentences)[:140])
 
 
+async def s_go_back():
+    print("25. 'go back a step' -> go_to_step, says where they are now")
+    agent, st, _, _ = build(step=3)                                # step 4: dice onion
+    sink = Sink()
+    stats = await agent.turn("Wait, can we go back to the previous step?", frames("mash_bowl"), sink)
+    said = " ".join(sink.sentences).lower()
+    check("go_to_step called, now on step 3", "go_to_step" in stats.tools and st.step == 2, f"tools={stats.tools} step={st.step}")
+    check("names the step it went back to", any(k in said for k in ("step 3", "step three", "mash")), said[:160])
+
+
+async def s_remember():
+    print("26. 'I don't have cilantro' -> remember, and it shows up in later turns")
+    agent, st, _, _ = build(step=1)
+    sink = Sink()
+    stats = await agent.turn("By the way, I don't have any cilantro.", frames("avocado_halves"), sink)
+    check("remember called and the note kept", "remember" in stats.tools and st.cook_notes, f"tools={stats.tools} notes={st.cook_notes}")
+    st.step = 6                                                    # the cilantro step
+    s2 = Sink()
+    await agent.turn("What do I do now?", frames("mash_bowl"), s2)
+    said = " ".join(s2.sentences).lower()
+    check("on the cilantro step it adapts (skip / parsley / leave out)", any(k in said for k in ("skip", "parsley", "without", "leave", "no cilantro", "instead")),
+          said[:160])
+
+
+async def s_timer():
+    print("27. 'set a timer for two minutes' -> set_timer(120)")
+    agent, st, _, _ = build(timers=True)
+    sink = Sink()
+    stats = await agent.turn("Set a timer for two minutes for the onions please.", frames("avocado_hold"), sink)
+    check("set_timer called, a 2 minute timer runs", "set_timer" in stats.tools and len(st.timers) == 1
+          and 110 <= min(st.timers.values()) - time.monotonic() <= 121, f"tools={stats.tools} timers={st.timers}")
+    check("confirms out loud", bool(sink.sentences), " | ".join(sink.sentences)[:120])
+
+
+async def s_servings():
+    print("28. 'for six people, how much onion?' -> amounts from the recipe (x3)")
+    agent, st, _, _ = build(step=3)
+    sink = Sink()
+    stats = await agent.turn("I'm making this for six people. How much onion do I need?", frames("avocado_hold"), sink)
+    said = " ".join(sink.sentences).lower()
+    check("says three quarters of an onion", any(k in said for k in ("three quarter", "3/4", "three-quarter", "¾")), said[:160])
+    check("set_servings recorded 6", st.servings == 6 or "set_servings" not in stats.tools, f"tools={stats.tools} servings={st.servings}")
+
+
+async def s_pause_tool():
+    print("29. 'someone's at the door' -> pause_session, and it says so")
+    agent, st, aimer, _ = build(session=True)
+    sink = Sink()
+    stats = await agent.turn("Hang on, someone's at the door, I need to go get it.", frames("avocado_hold"), sink)
+    check("paused through the tool, spoke first", "pause_session" in stats.tools and st.session == "paused" and bool(sink.sentences),
+          f"tools={stats.tools} session={st.session} | {' | '.join(sink.sentences)[:100]}")
+
+
+async def s_history_cached():
+    print("30. the conversation itself is read from the cache on the next turn")
+    agent, st, _, usage = build()
+    await agent.prewarm()
+    await agent.turn("Where do I start?", frames("avocado_hold"), Sink())
+    await agent.turn("And after that?", frames("avocado_hold"), Sink())
+    r1, r2 = (getattr(u, "cache_read_input_tokens", 0) or 0 for u in usage[:2])
+    check("turn 2 reads more from the cache than turn 1 (history breakpoint)", r2 > r1, f"cache_read turn1={r1} turn2={r2}")
+
+
 async def main():
     only = sys.argv[1:]            # optional: scenario names, e.g. `always_speaks`
     for scenario in (s_cache, s_point_and_defer, s_not_visible, s_barge_in, s_propose_done,
                      s_long_conversation, s_checkin, s_fallback, s_timeout, s_no_camera, s_always_speaks,
                      s_no_key_drill, s_refusal_drill, s_plain_language, s_spatial, s_where_am_i, s_yes_advances,
-                     s_talk_less, s_retry_on_haiku, s_retry_also_slow, s_pushback_relay, s_greeting, s_ignore_camera, s_trust_user_done):
+                     s_talk_less, s_retry_on_haiku, s_retry_also_slow, s_pushback_relay, s_greeting, s_ignore_camera, s_trust_user_done,
+                     s_go_back, s_remember, s_timer, s_servings, s_pause_tool, s_history_cached):
         if only and scenario.__name__[2:] not in only:
             continue
         try:

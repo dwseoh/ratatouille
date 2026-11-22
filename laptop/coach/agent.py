@@ -314,7 +314,7 @@ def make_handlers(state: State, aimer, steps, link, *, timers=None, session=None
     async def _walk(names: list[str]) -> None:
         for prev, nxt in zip(names, names[1:]):
             await asyncio.sleep(POINT_DWELL_S)
-            if state.session != "active" or state.target != prev:
+            if state.session == "paused" or state.target != prev:
                 return                          # paused, stopped, or someone else moved the laser: stop the tour
             _point(nxt)
 
