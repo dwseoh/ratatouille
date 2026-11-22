@@ -19,6 +19,13 @@ import time
 import cv2
 import numpy as np
 
+from .recipe_images import RECIPES_DIR, placeholder_svg, step_image_path
+
+try:                      # module level: FastAPI resolves `request: Request` annotations from here
+    from fastapi import Request
+except ImportError:       # the dashboard is optional; build_app() will say what is missing
+    Request = None
+
 log = logging.getLogger(__name__)
 
 STREAM_FPS = 10
@@ -26,18 +33,31 @@ EVENTS_SHOWN = 20
 
 
 def annotate(frame, dets, dot, target_name):
+    """Boxes on the live feed. The laser's target gets a thick green box and a big label, so people who can't spot
+    the little red dot can still see what Remy is pointing at."""
     out = frame.copy()
     for d in dets:
         x1, y1, x2, y2 = map(int, d.box)
-        color = (0, 200, 0) if d.name == target_name else (200, 200, 200)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(out, f"{d.name} {d.conf:.2f}", (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        if d.name == target_name:
+            continue                                            # drawn last, on top
+        cv2.rectangle(out, (x1, y1), (x2, y2), (200, 200, 200), 2)
+        cv2.putText(out, f"{d.name} {d.conf:.2f}", (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    for d in dets:
+        if d.name != target_name:
+            continue
+        x1, y1, x2, y2 = map(int, d.box)
+        cv2.rectangle(out, (x1 - 3, y1 - 3), (x2 + 3, y2 + 3), (0, 200, 0), 5)
+        label = f"> {d.name}"
+        (w, h), base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        top = max(y1 - h - base - 8, 0)
+        cv2.rectangle(out, (x1 - 3, top), (x1 + w + 8, top + h + base + 6), (0, 140, 0), -1)
+        cv2.putText(out, label, (x1 + 2, top + h + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
     if dot is not None:
         cv2.circle(out, (int(dot[0]), int(dot[1])), 12, (0, 0, 255), 2)
     return out
 
 
-def snapshot(state, frames=None, link=None, agent=None, captions=None) -> dict:
+def snapshot(state, frames=None, link=None, agent=None, captions=None, recipes_root=RECIPES_DIR) -> dict:
     """Everything /state returns. Pure: only reads. `captions` (CaptionTimeline) gives the sentence being spoken right
     now; without it (typing mode) the coach's latest sentence is shown."""
     if captions is not None:
@@ -47,9 +67,18 @@ def snapshot(state, frames=None, link=None, agent=None, captions=None) -> dict:
         caption = recent[-1] if recent else ""
     step = state.current_step
     status = getattr(link, "status", None)
+    shown = state.image_step                                   # the step whose picture is up (usually the current one)
+    photo = step_image_path(state.recipe, shown, recipes_root)
+    version = f"?v={int(photo.stat().st_mtime)}" if photo else ""
     return {
         "session": state.session,
-        "step": {"n": state.step + 1, "total": len(state.recipe.steps), "short": step.short, "goal": step.goal},
+        "step": {"n": state.step + 1, "total": len(state.recipe.steps), "short": step.short, "goal": step.goal,
+                 "how": list(step.how), "tips": list(step.tips),
+                 "image_url": f"/recipe-image/{shown}{version}",      # always set: photo, else the dish photo, else a card
+                 "image_step": shown + 1, "image_real": photo is not None,
+                 "image_note": (f"Showing step {shown + 1}: {state.recipe.steps[shown].short}"
+                                if shown != state.step else "")},
+        "recipe": state.recipe.name,
         "transcript": state.transcript,
         "speaking": state.speaking,
         "user_talking": state.user_talking,
@@ -79,15 +108,48 @@ def _encode(img) -> bytes:
     return buf.tobytes() if ok else b""
 
 
-def build_app(state, frames=None, link=None, agent=None, captions=None):
-    from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse, StreamingResponse
+def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_root=RECIPES_DIR):
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
     app = FastAPI(title="Remy dashboard", docs_url=None, redoc_url=None)
+    app.state.port = 8000                               # serve() sets the real one
 
     @app.get("/state")
     async def get_state():
-        return snapshot(state, frames, link, agent, captions)
+        return snapshot(state, frames, link, agent, captions, recipes_root)
+
+    @app.get("/recipe-image/{n}")
+    async def recipe_image(n: int):
+        """The photo for step index n. The file is found server-side (never from a client-supplied path)."""
+        if not 0 <= n < len(state.recipe.steps):
+            raise HTTPException(status_code=404, detail="no such step")
+        path = step_image_path(state.recipe, n, recipes_root)
+        if path is None:                                # no photo and no dish photo: a plain card, never an empty hole
+            return Response(placeholder_svg(state.recipe, n), media_type="image/svg+xml",
+                            headers={"Cache-Control": "no-cache"})
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/cook", response_class=HTMLResponse)
+    async def cook():
+        """Phone page: the current step, its photo and how to do it, big and easy to read."""
+        return COOK_PAGE
+
+    def cook_url(request: Request) -> str:
+        host = lan_ip() or request.url.hostname or "localhost"
+        return f"http://{host}:{request.url.port or app.state.port}/cook"
+
+    @app.get("/info")
+    async def info(request: Request):
+        return {"cook_url": cook_url(request), "qr": _qr_available()}
+
+    @app.get("/cook-qr.svg")
+    async def cook_qr(request: Request):
+        """QR code that opens /cook on a phone on the same WiFi (needs the optional `segno` package)."""
+        svg = _qr_svg(cook_url(request))
+        if svg is None:
+            raise HTTPException(status_code=404, detail="QR codes need: pip install segno")
+        return Response(svg, media_type="image/svg+xml")
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -110,6 +172,26 @@ def build_app(state, frames=None, link=None, agent=None, captions=None):
     return app
 
 
+def _qr_available() -> bool:
+    try:
+        import segno  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _qr_svg(url: str) -> bytes | None:
+    try:
+        import io
+
+        import segno
+    except ImportError:
+        return None
+    buf = io.BytesIO()
+    segno.make(url, error="m").save(buf, kind="svg", scale=6, border=2, dark="#000000", light="#ffffff")
+    return buf.getvalue()
+
+
 def lan_ip() -> str | None:
     """This laptop's address on the local network (what a phone on the same WiFi types), or None if offline.
     A UDP "connect" picks the outgoing interface without sending any packet."""
@@ -127,6 +209,7 @@ async def serve(app, port: int) -> None:
     """Run the dashboard on the current loop. 0.0.0.0 so a judge's phone on the same hotspot can open it.
     Cancelling this stops the server cleanly (no traceback), even with a browser still streaming /stream."""
     import uvicorn
+    app.state.port = port
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning",
                                            timeout_graceful_shutdown=1))
     ip = lan_ip()
@@ -140,116 +223,5 @@ async def serve(app, port: int) -> None:
         raise
 
 
-PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Remy: live dashboard</title>
-<script>
-  // Apply the saved theme / font before the page paints (no flash). The link can force them: ?theme=light&font=dyslexic
-  const OPTS = { theme: ["dark", "light"], font: ["default", "dyslexic"] };
-  const store = { get(k) { try { return localStorage.getItem("remy-" + k); } catch (e) { return null; } },
-                  set(k, v) { try { localStorage.setItem("remy-" + k, v); } catch (e) {} } };
-  const params = new URLSearchParams(location.search);
-  const pick = k => { for (const v of [params.get(k), store.get(k)]) if (OPTS[k].includes(v)) return v; return OPTS[k][0]; };
-  function applyOption(k, v) { document.documentElement.dataset[k] = v; store.set(k, v);
-    const b = document.getElementById(k === "theme" ? "optTheme" : "optFont");
-    if (b) b.setAttribute("aria-pressed", String(v === OPTS[k][1])); }
-  document.documentElement.dataset.theme = pick("theme"); document.documentElement.dataset.font = pick("font");
-</script>
-<style>
-  /* Options (header buttons, remembered in this browser, or in the link: ?theme=light&font=dyslexic) */
-  :root { --bg:#0e1116; --panel:#171c24; --line:#2a3340; --text:#f2f5f9; --dim:#98a4b3; --accent:#ffd447; --ok:#4cd07d; --bad:#ff6b6b; --vision:#6cb6ff;
-          --font:-apple-system, system-ui, sans-serif; --track:#2a3340; }
-  :root[data-theme="light"] { --bg:#f4f6f9; --panel:#ffffff; --line:#d3d9e2; --text:#16202c; --dim:#4f5d6e; --accent:#8f4a00; --ok:#17783b; --bad:#b3261e; --vision:#0b5cad;
-          --track:#d3d9e2; }
-  :root[data-font="dyslexic"] { --font:"OpenDyslexic", "Comic Sans MS", "Chalkboard SE", sans-serif; }
-  :root[data-font="dyslexic"] body { letter-spacing:.03em; word-spacing:.1em; line-height:1.6; }
-  @font-face { font-family:"OpenDyslexic"; font-weight:400; font-display:swap;
-               src:url("https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.2.5/files/opendyslexic-latin-400-normal.woff2") format("woff2"); }
-  @font-face { font-family:"OpenDyslexic"; font-weight:700; font-display:swap;
-               src:url("https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.2.5/files/opendyslexic-latin-700-normal.woff2") format("woff2"); }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 var(--font); }
-  button { font:inherit; }
-  header { display:flex; flex-wrap:wrap; gap:12px 16px; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); }
-  .opts { margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; }
-  .opt { cursor:pointer; padding:4px 12px; border-radius:99px; border:1px solid var(--line); background:var(--panel); color:var(--text); font-size:13px; }
-  .opt[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); font-weight:700; }
-  .opt:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
-  header h1 { font-size:20px; margin:0; } .pill { padding:2px 10px; border-radius:99px; background:var(--panel); border:1px solid var(--line); font-size:13px; }
-  .ok { color:var(--ok); } .bad { color:var(--bad); }
-  main { display:grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); gap:16px; padding:16px 20px; }
-  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
-  /* wide screens: the right column (step, what you said, what Remy says) stays in view while the left one scrolls */
-  @media (min-width: 821px) { main > section:last-child { position:sticky; top:8px; align-self:start; max-height:calc(100vh - 16px); overflow-y:auto; } }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:16px; }
-  .panel h2 { margin:0 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
-  #video { width:100%; border-radius:8px; background:#000; display:block; }
-  #step { font-size:30px; font-weight:700; } #goal { color:var(--dim); margin-top:4px; }
-  #captions .line { font-size:34px; line-height:1.25; font-weight:600; color:var(--accent); margin:2px 0; }
-  #captions.idle .line { color:var(--text); opacity:.7; }
-  #captions { max-height:42vh; overflow-y:auto; }
-  #transcript { font-size:20px; min-height:28px; max-height:7.5em; overflow-y:auto; overflow-wrap:anywhere; } .dot { display:inline-block; width:12px; height:12px; border-radius:50%; background:var(--track); margin-right:8px; }
-  .dot.on { background:var(--ok); box-shadow:0 0 10px var(--ok); }
-  #events { max-height:240px; overflow:auto; font-size:14px; } #events div { padding:3px 0; border-bottom:1px solid var(--line); }
-  .src { display:inline-block; min-width:62px; color:var(--dim); } .src.vision{color:var(--vision)} .src.agent{color:var(--accent)} .src.user{color:var(--ok)} .src.system{color:var(--bad)}
-  .bar { display:flex; align-items:center; gap:10px; margin:6px 0; } .bar span.l { width:8.5em; flex:none; color:var(--dim); font-size:14px; }
-  .bar .track { flex:1; background:var(--track); height:12px; border-radius:6px; overflow:hidden; } .bar .fill { height:100%; background:var(--accent); width:0; transition:width .2s; }
-  .bar span.v { width:5.5em; flex:none; white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
-</style></head>
-<body>
-<header><h1>Remy</h1><span class="pill" id="session">idle</span><span class="pill" id="cam">camera</span>
-  <span class="pill" id="s3">S3</span><span class="pill" id="bat"></span><span class="pill" id="conn">connecting…</span>
-  <span class="opts">
-    <button class="opt" id="optTheme" aria-pressed="false" title="Switch between dark and light">Light mode</button>
-    <button class="opt" id="optFont" aria-pressed="false" title="Show all text in the OpenDyslexic font">Dyslexia font</button>
-  </span></header>
-<main>
-  <section>
-    <div class="panel"><h2>What Remy sees</h2><img id="video" src="/stream" alt="live camera feed with detections">
-      <div style="margin-top:8px;color:var(--dim)">Laser: <b id="laser">off</b> · Sees: <span id="visible">nothing</span></div></div>
-    <div class="panel"><h2>Latency of the last turn</h2><div id="lat"></div></div>
-  </section>
-  <section>
-    <div class="panel"><h2>Step</h2><div id="step">-</div><div id="goal"></div></div>
-    <div class="panel"><h2>You said</h2><div id="transcript"></div>
-      <div style="margin-top:8px"><span class="dot" id="spk"></span><span id="spkl">quiet</span></div></div>
-    <div class="panel" id="captions"><h2>Remy says</h2><div id="cap"></div></div>
-    <div class="panel"><h2>Event log</h2><div id="events"></div></div>
-  </section>
-</main>
-<script>
-const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const LAT = [["first_token","First word"],["first_audio","First sound"],["point_called","Laser moved"],["on_target","On target"]];
-function flag(el, ok, label) { el.textContent = label + (ok ? " ✓" : " ✗"); el.className = "pill " + (ok ? "ok" : "bad"); }
-async function tick() {
-  try {
-    const s = await (await fetch("/state", {cache:"no-store"})).json();
-    $("conn").textContent = "live"; $("conn").className = "pill ok";
-    $("session").textContent = s.session === "active" ? "cooking" : "waiting for “hey Remy”";
-    flag($("cam"), s.links.camera, "camera"); flag($("s3"), s.links.s3, "S3");
-    if (s.links.camera_ignored) { $("cam").textContent = "camera ignored"; $("cam").className = "pill"; }
-    $("bat").textContent = s.links.vbat_mv ? "battery " + (s.links.vbat_mv/1000).toFixed(2) + " V" : "";
-    $("step").textContent = s.step.n + "/" + s.step.total + "  " + s.step.short; $("goal").textContent = s.step.goal;
-    $("cap").innerHTML = '<div class="line">' + (s.caption ? esc(s.caption) : "…") + '</div>';
-    $("captions").className = "panel" + (s.speaking ? "" : " idle");
-    $("transcript").textContent = s.transcript || "";
-    $("spk").className = "dot" + (s.speaking ? " on" : ""); $("spkl").textContent = s.speaking ? "Remy is speaking" : (s.user_talking ? "listening to you" : "quiet");
-    $("laser").textContent = s.laser.target ? s.laser.target + (s.laser.on_target ? " (on target)" : " (moving)") : "off";
-    $("visible").textContent = s.visible.join(", ") || "nothing";
-    $("events").innerHTML = s.events.slice().reverse().map(e =>
-      '<div><span class="src ' + e.source + '">' + e.source + '</span>' + esc(e.text) + '</div>').join("");
-    $("lat").innerHTML = LAT.map(([k, label]) => {
-      const ms = s.latency[k]; const pct = ms == null ? 0 : Math.min(100, ms / 20);
-      return '<div class="bar"><span class="l">' + label + '</span><div class="track"><div class="fill" style="width:' + pct + '%"></div></div><span class="v">' + (ms == null ? "-" : ms + " ms") + '</span></div>';
-    }).join("");
-  } catch (e) { $("conn").textContent = "disconnected"; $("conn").className = "pill bad"; }
-}
-for (const [k, id] of [["theme", "optTheme"], ["font", "optFont"]]) {
-  const b = $(id), on = OPTS[k][1];
-  b.setAttribute("aria-pressed", String(document.documentElement.dataset[k] === on));
-  b.addEventListener("click", () => applyOption(k, document.documentElement.dataset[k] === on ? OPTS[k][0] : on));
-}
-tick(); setInterval(tick, 250);
-</script></body></html>
-"""
+from .pages import COOK_PAGE  # noqa: E402
+from .pages import DASHBOARD_PAGE as PAGE  # noqa: E402  (kept as dashboard.PAGE for tests and callers)

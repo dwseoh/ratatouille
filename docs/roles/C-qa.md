@@ -130,6 +130,37 @@ battery pills, "live" in the header.
   nothing else uses port 8000.
 - **Disconnect test:** stop the script (Ctrl-C). The page header turns red "disconnected" within a second.
 
+## 4b. Step card, phone page and recipe import (10 min)
+
+**Step card + photos.** Run `python -m tools.try_dashboard` (or the app). The dashboard has a **How to do this step** panel:
+the step's actions as a numbered list, plus a photo if one exists. Photos are optional; drop yours into
+`laptop/recipes/images/guacamole/` as `step-1.jpg` ... `step-7.jpg` (1-based; `.jpg`, `.png` or `.webp`), and a
+`hero.jpg` for steps without their own. Take them at the first rehearsal so they match your kitchen. A step with no picture
+never shows an empty box: a picture is ALWAYS up. Order: the step's own photo, else `hero.jpg` (the finished dish), else a plain
+card with the recipe and step name. **Ask Remy for another step's picture:** say "show me the picture from the onion step";
+the dashboard and phone switch to it with a small "Showing step 4" note, and go back to following you when you move to the
+next step (say "show the current step" to switch back sooner). The live feed draws the laser's target with a thick green box and a big `> lime` label.
+
+**Phone page.** Open `http://<laptop address>:8000/cook` on a phone (same WiFi). It shows ONE step at a time: progress bar,
+the step name, the photo, the actions in large text, tips, and what Remy last said. It follows the cooking live. It also has
+**Light mode** and **Dyslexia font** buttons. The main dashboard has a **Follow along on your phone** box with a QR code
+for this page: scan it with the phone camera.
+
+**Import a recipe** (offline tool, costs a few cents):
+
+```bash
+.venv/bin/python tools/import_recipe.py "https://www.bbcgoodfood.com/recipes/easy-pancakes" --no-images
+```
+
+It prints what it found (the objects the camera will look for, and the steps) and asks **Looks right?**. Say `y` to write
+`laptop/recipes/<name>.json`. Check the object list: they must be real things on a counter ("flour", "bowl"), not
+"1 tsp salt, divided". Then try it: `cd laptop && RECIPE=recipes/easy-pancakes.json ../.venv/bin/python -m coach.agent_cli`.
+When the page has a photo per instruction, each step gets its own (`step-N.jpg`) and the rest keep the dish photo (`hero.jpg`).
+It also takes a PDF, a text file or a photo of a recipe page: `... tools/import_recipe.py ~/Downloads/chili.pdf`.
+Without `--no-images` it also saves the recipe's main picture (check you may use it; local demo only).
+To run the whole app on it: `RECIPE=recipes/easy-pancakes.json python -m coach.main ...` (restart to switch recipes).
+Caveat for the pitch: say "imports a recipe", not "works with any counter" (the object detector is untested on random food).
+
 ## 5. Check-ins (the coach talks on its own) (5 min)
 
 In the section-3 app, with `CHECKINS=normal` (default):
