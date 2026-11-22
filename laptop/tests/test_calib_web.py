@@ -187,3 +187,45 @@ def test_requests_keep_the_page_alive(tmp_path):
         t[0] = 100.0
         c.post("/start")                        # a POST counts as the page being open, not just /state
         assert cw.seen_at == 100.0
+
+
+def test_verify_measures_then_adds_points(rig, monkeypatch):
+    c, cw, link, out = rig
+    assert c.post("/verify").status_code == 409                             # nothing to verify yet
+    s = c.post("/start", json={"n": 4}).json()
+    while not s["done"]:
+        s = click_current(c, link).json()
+    assert s["saved"] and json.loads(out.read_text())["frame"] == [640, 480]   # FakeFrames' size recorded
+    s = c.post("/verify").json()
+    assert s["mode"] == "verify" and link.laser and s["verify"]["total"] == calibrate.VERIFY_N
+    assert tuple(s["goal"]) == (link.pan, link.tilt)
+    while s["mode"] == "verify":
+        x, y = cam(link.pan, link.tilt)
+        s = c.post("/click", json={"x": x + 3, "y": y}).json()             # the dot lands 3 px right
+    v = s["verify"]
+    assert v["done"] and v["stats"]["n"] == calibrate.VERIFY_N and v["stats"]["mean_deg"] == pytest.approx(3 / 8, abs=0.01)
+    assert any(ln.startswith("VERIFY:") for ln in s["log"]) and not link.laser
+    s = c.post("/verify_add").json()
+    assert s["saved"] and s["n_points"] == 16 + calibrate.VERIFY_N
+    assert len(json.loads(out.read_text())["points"]["px"]) == 16 + calibrate.VERIFY_N
+
+
+def test_auto_verify(rig, monkeypatch):
+    c, cw, link, out = rig
+    c.post("/start", json={"n": 4})
+    s = None
+    for _ in range(16):
+        s = click_current(c, link).json()
+    assert s["saved"]
+
+    async def fake_blink(link, frames, near=None, lag_s=0.0, sleep=asyncio.sleep):
+        await sleep(0)
+        return cam(link.pan, link.tilt)
+    monkeypatch.setattr(calibrate, "blink_dot", fake_blink)
+    assert c.post("/verify_auto").json()["mode"] == "auto_verify"
+    for _ in range(200):
+        s = c.get("/state").json()
+        if s["mode"] != "auto_verify":
+            break
+        time.sleep(0.01)
+    assert s["verify"]["done"] and s["verify"]["stats"]["max_deg"] < 0.01 and not link.laser

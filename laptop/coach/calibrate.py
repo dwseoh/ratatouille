@@ -6,8 +6,8 @@ Keys: s = skip point (dot off-screen), r = redo last point, t = test mode (click
       a = add the verify points to the calibration and refit, q = quit.
 Calibrate at the demo counter distance and posture. Redo only if the camera or pan-tilt moved relative to each other.
 
-Every grid point (and every aim at runtime) is approached from below on both axes, so the SG90's backlash settles
-the same way each time. A click is only taken once ControlLink says the servos stopped, the settle time passed and
+Every grid point (and every aim at runtime) is approached the same way (pan from below, tilt from above), so the
+SG90's backlash settles the same way each time. A click is only taken once ControlLink says the servos stopped, the settle time passed and
 a camera frame newer than that is on screen. A click near the dot snaps to the dot's centre (dot finder).
 Both models are fitted (physical "plane" + v1 polynomial, see docs/aiming.md); the one with the lower
 leave-one-out error is used, and both are printed. calibration.json records the frame size and CAM_ROTATE.
@@ -32,7 +32,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from .aim import Calibration, norm_rotate
+from .aim import APPROACH_DIR, Calibration, norm_rotate
 from .aim_model import DEG
 from .contracts import ControlLinkAPI, FrameSource
 from .dot import LAG_S, blink_dot
@@ -44,7 +44,7 @@ DEFAULT_N = 5           # grid size per axis
 SETTLE_S = 0.6          # after the servos stop: SG90 settle + camera latency (~7 fps ESP32 stream) before a click
 AUTO_SETTLE_S = 0.6     # --auto: same, before looking for the dot
 AUTO_TRIES = 2          # --auto: blinks per grid point before skipping it
-APPROACH_DEG = 3.0      # visit every point from this far below on both axes (same as the Aimer): cancels backlash
+APPROACH_DEG = 3.0      # visit every point from 3 deg away in aim.APPROACH_DIR (same as the Aimer): cancels backlash
 VIA_SETTLE_S = 0.08     # pause at the approach point before the final move
 SNAP_FRAC = 0.04        # a click within this fraction of the frame width of a found dot snaps to it
 VERIFY_N = 8            # verify points
@@ -62,20 +62,24 @@ def make_grid(pan=(60.0, 120.0), tilt=(30.0, 90.0), n: int = 4) -> list[tuple[fl
     return out
 
 
-def _limits_lo() -> tuple[float, float]:
+def _limits() -> tuple[tuple[float, float], tuple[float, float]]:
     from .config import CONFIG
-    return CONFIG.pan_min, CONFIG.tilt_min
+    return (CONFIG.pan_min, CONFIG.tilt_min), (CONFIG.pan_max, CONFIG.tilt_max)
 
 
 class Mover:
-    """Moves the servos like the Aimer does: to `APPROACH_DEG` below the goal on both axes first, then up to it, so
-    gear backlash settles the same way for every point. settled() is True once ControlLink stopped ramping
-    (`moving`) and `settle_s` passed. A link without `moving` (FakeLink) goes straight to the goal."""
+    """Moves the servos like the Aimer does: first to APPROACH_DEG short of the goal (pan below it, tilt above it:
+    aim.APPROACH_DIR), then to it, so gear backlash settles the same way for every point. settled() is True once
+    ControlLink stopped ramping (`moving`) and `settle_s` passed. A link without `moving` (FakeLink) goes straight
+    to the goal."""
 
     def __init__(self, link: ControlLinkAPI, approach_deg: float = APPROACH_DEG,
-                 lo: tuple[float, float] | None = None, clock: Callable[[], float] = time.monotonic):
-        self.link, self.approach, self.clock = link, approach_deg, clock
-        self.lo = lo if lo is not None else _limits_lo()
+                 lo: tuple[float, float] | None = None, clock: Callable[[], float] = time.monotonic,
+                 hi: tuple[float, float] | None = None, dirs: tuple[float, float] = APPROACH_DIR):
+        self.link, self.approach, self.clock, self.dirs = link, approach_deg, clock, dirs
+        lim_lo, lim_hi = _limits()
+        self.lo = lo if lo is not None else lim_lo
+        self.hi = hi if hi is not None else lim_hi
         self.goal: tuple[float, float] | None = None
         self.via: tuple[float, float] | None = None
         self.arrived_at: float | None = None        # clock() when the servos stopped at the goal
@@ -86,7 +90,8 @@ class Mover:
         self.goal = (float(goal[0]), float(goal[1]))
         self.arrived_at, self._via_at = None, None
         if self.approach > 0 and hasattr(self.link, "moving"):
-            self.via = (max(self.goal[0] - self.approach, self.lo[0]), max(self.goal[1] - self.approach, self.lo[1]))
+            self.via = tuple(min(max(g - d * self.approach, lo), hi)
+                             for g, d, lo, hi in zip(self.goal, self.dirs, self.lo, self.hi))
             self.link.pan, self.link.tilt = self.via
         else:
             self.via = None

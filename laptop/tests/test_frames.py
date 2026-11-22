@@ -190,3 +190,14 @@ def test_rotate_180_and_flip(tmp_path):
         assert f is not None and f[-3:, :].mean() > 200 and f[:3, :].mean() < 50   # band moved to the bottom
     finally:
         g.stop()
+
+
+def test_last_frame_size_follows_the_newest_frame():
+    import numpy as np
+
+    from coach import frames as fr
+    fr._note_size(np.zeros((240, 320, 3), np.uint8))
+    assert fr.last_frame_size() == (320, 240)
+    fr._note_size(np.zeros((480, 640, 3), np.uint8))
+    assert fr.last_frame_size() == (640, 480)
+    fr._last_size = None

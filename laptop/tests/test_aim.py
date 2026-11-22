@@ -164,10 +164,12 @@ def test_smoothing_median_of_new_detections_and_jumps(rig):
     aimer, link, st, clock = rig
     aimer.point_at("lime")
     others = [d for d in st.dets if d.name != "lime"]
-    for cx in (300, 304, 302, 314):                         # YOLO jitter, then one box 12 px off
+    xs = (296, 300, 304, 302, 314, 299)                     # YOLO jitter, one box 12 px off
+    for cx in xs:
         st.dets = others + [box_at("lime", cx, 240)]
         run_ticks(aimer, clock, 3)                          # the same box for 3 ticks counts once
-    assert aimer.goal[0] == pytest.approx(30 + 304 / 8)     # median of the last 3 boxes (304, 302, 314)
+    med = float(np.median(xs[-Aimer.SMOOTH_N:]))            # median of the last SMOOTH_N boxes: 302
+    assert aimer.goal[0] == pytest.approx(30 + med / 8)
     st.dets = others + [box_at("lime", 600, 240)]           # the lime moved: start over, don't average across
     run_ticks(aimer, clock, 1)
     assert aimer.goal[0] == pytest.approx(30 + 600 / 8)
@@ -234,7 +236,7 @@ def test_target_moving_out_of_reach_and_back(rig):
     assert link.laser and aimer.on_target and aimer.reachable
 
 
-def test_final_approach_is_always_from_below(rig):
+def test_final_approach_is_always_the_same_way(rig):
     aimer, link, st, clock = rig
     others = [d for d in st.dets if d.name != "lime"]
     for x, y in ((500, 100), (200, 300), (400, 200), (100, 50)):
@@ -248,7 +250,7 @@ def test_final_approach_is_always_from_below(rig):
                 break
         assert aimer.on_target
         moves = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(trail, trail[1:]) if a != b]
-        assert moves and all(d >= 0 for d in moves[-1])   # the last move goes up on every axis that moved
+        assert moves and moves[-1][0] >= 0 and moves[-1][1] <= 0   # last move: pan up, tilt down (APPROACH_DIR)
         assert (link.pan, link.tilt) == pytest.approx(aimer.goal)
 
 

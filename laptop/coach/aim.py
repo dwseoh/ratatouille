@@ -46,6 +46,10 @@ MIN_FIT_POINTS = len(TERMS)
 FORMAT_VERSION = 2
 NOMINAL_DIST_M = 0.6        # for degrees -> cm when there's no plane model
 OUT_OF_REACH = "out_of_reach"   # point_at result: visible, but outside the servo limits (laser off)
+# Direction of the final move on each axis (pan, tilt): +1 = the last move increases the angle. Every aim and every
+# calibration point ends with a move this way, so the SG90's backlash/deadband settles on the same side each time.
+# Tilt ends downwards because tilt 0 is the tilt servo's end stop on this box (no room to come up from below it).
+APPROACH_DIR = (1.0, -1.0)
 MODELS = ("poly", "plane")
 
 
@@ -332,8 +336,8 @@ class Aimer:
 
     point_at() returns "ok", "not_visible", "unknown_object", or "out_of_reach" (visible, but outside the servo
     limits: the laser stays off). Each tick: follow the target's detection (median of its last few boxes, sticking
-    to the same instance), aim AIM_Y of the way down its box, step the servos there with a final approach from
-    below on both axes (so servo backlash always settles the same way, as in calibration), and only claim
+    to the same instance), aim AIM_Y of the way down its box, step the servos there with the final move on each
+    axis in APPROACH_DIR (so servo backlash always settles the same way, as in calibration), and only claim
     on_target once the servos have arrived at a goal that wasn't clamped.
     """
 
@@ -342,12 +346,13 @@ class Aimer:
     PAN_MIN, PAN_MAX, TILT_MIN, TILT_MAX = 0.0, 180.0, 0.0, 180.0
     MAX_STEP_DEG = 4.0      # rate limit per tick
     DEADBAND_DEG = 0.5      # don't send changes smaller than this (servo buzz)
-    HOLD_DEG = 1.0          # once on target (open loop): ignore goal changes smaller than this (YOLO box jitter)
-    SMOOTH_N = 3            # median of the last N detections (new boxes only) of the target
+    HOLD_DEG = 1.0          # on target with a full smoothing window (open loop): ignore smaller goal changes
+    SMOOTH_N = 5            # median of the last N detections (new boxes only; ~0.7 s of YOLO at 7 fps)
     JUMP_FRAC = 0.75        # a box this far (x its size) from the smoothed one: the object moved / another instance
     JUMP_MIN_PX = 12.0
     REACH_TOL_DEG = 1.0     # goal outside the limits by more than this = out of reach
-    APPROACH_DEG = 3.0      # final approach from below on each axis (cancels backlash). 0 = off
+    APPROACH_DEG = 3.0      # final approach length on each axis, in APPROACH_DIR (cancels backlash). 0 = off
+    APPROACH_DIR = APPROACH_DIR
     SETTLE_S = 0.15         # link reports it stopped moving -> this long before on_target (ControlLink only)
     LOST_HOLD_S = 1.0       # target unseen this long -> hold position
     LOST_OFF_S = 3.0        # target unseen this long -> laser off
@@ -557,13 +562,16 @@ class Aimer:
 
     # ── servo drive ─────────────────────────────────────────────────────────
     def _drive(self, goal: tuple[float, float], now: float) -> bool:
-        """Step towards goal (via the approach point if the move ends downwards). True once arrived and still."""
-        hold = self.HOLD_DEG if (self.on_target and not self.closed_loop) else self.DEADBAND_DEG
+        """Step towards goal (via the approach point if the move would end the wrong way). True once arrived and
+        still."""
+        settled_track = self.on_target and not self.closed_loop and len(self._boxes) >= self.SMOOTH_N
+        hold = self.HOLD_DEG if settled_track else self.DEADBAND_DEG
         if self._final is None or max(abs(goal[0] - self._final[0]), abs(goal[1] - self._final[1])) >= hold:
             self._final = goal
             self._arrived_at = None
             cur = (self.link.pan, self.link.tilt)
-            via = (self._via_axis(goal[0], cur[0], self.PAN_MIN), self._via_axis(goal[1], cur[1], self.TILT_MIN))
+            via = (self._via_axis(goal[0], cur[0], self.PAN_MIN, self.PAN_MAX, self.APPROACH_DIR[0]),
+                   self._via_axis(goal[1], cur[1], self.TILT_MIN, self.TILT_MAX, self.APPROACH_DIR[1]))
             self._via = via if via != goal else None
         target = self._via if self._via is not None else self._final
         pan, tilt = self._step(self.link.pan, target[0]), self._step(self.link.tilt, target[1])
@@ -582,10 +590,11 @@ class Aimer:
         settle = self.SETTLE_S if hasattr(self.link, "moving") else 0.0
         return now - self._arrived_at >= settle
 
-    def _via_axis(self, goal: float, cur: float, lo: float) -> float:
-        if self.APPROACH_DEG <= 0 or goal >= cur - self.DEADBAND_DEG:
-            return goal                     # already ends with an upward (or no) move
-        return max(goal - self.APPROACH_DEG, lo)
+    def _via_axis(self, goal: float, cur: float, lo: float, hi: float, direction: float) -> float:
+        """Approach point on one axis: goal itself if the move already ends in `direction`, else overshoot."""
+        if self.APPROACH_DEG <= 0 or direction * (goal - cur) > -self.DEADBAND_DEG:
+            return goal                     # the move already ends the right way (or there's no move)
+        return min(max(goal - direction * self.APPROACH_DEG, lo), hi)
 
     def _step(self, cur: float, goal: float) -> float:
         d = goal - cur

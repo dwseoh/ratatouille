@@ -167,10 +167,12 @@ class Rig:
     def dot_px(self, cmd, rng=None, move: bool = True) -> np.ndarray:
         return self.project(self.land(cmd, rng, move))[0]
 
-    def approach(self, cmd, via_deg: float = 3.0, rng=None, lo=(0.0, 0.0)) -> tuple[float, float]:
-        """Move like the Aimer/calibration do: first to cmd - via_deg on each axis, then up to cmd."""
+    def approach(self, cmd, via_deg: float = 3.0, rng=None, lo=(0.0, 0.0), hi=(180.0, 180.0),
+                 dirs=(1.0, -1.0)) -> tuple[float, float]:
+        """Move like the Aimer/calibration do: first to via_deg short of cmd (pan below, tilt above: dirs = the
+        direction of the final move per axis, as aim.APPROACH_DIR), clamped to [lo, hi], then to cmd."""
         if via_deg:
-            self.mech((max(cmd[0] - via_deg, lo[0]), max(cmd[1] - via_deg, lo[1])), rng)
+            self.mech(tuple(min(max(c - d * via_deg, a), b) for c, d, a, b in zip(cmd, dirs, lo, hi)), rng)
         return self.mech(cmd, rng)
 
     def ideal_cmd(self, pt, guess=(100.0, 10.0)) -> np.ndarray:
@@ -202,14 +204,14 @@ class Rig:
 
     # ── calibration ──────────────────────────────────────────────────────────
     def calibrate(self, grid, rng=None, click_px: float = 1.2, via_deg: float = 0.0, lo=(0.0, 0.0),
-                  start=(90.0, 60.0)) -> tuple[np.ndarray, np.ndarray]:
+                  start=(90.0, 60.0), hi=(180.0, 180.0)) -> tuple[np.ndarray, np.ndarray]:
         """Simulated click calibration over grid (list of (pan, tilt)), visited in order. Points whose dot is
-        off-screen are skipped. via_deg > 0 approaches every point from below (as the new calibrate does)."""
+        off-screen are skipped. via_deg > 0 approaches every point the same way (as the new calibrate does)."""
         rng = rng if rng is not None else np.random.default_rng(0)
         self.reset_servos(start)
         pix, ang = [], []
         for cmd in grid:
-            self.approach(cmd, via_deg, rng, lo) if via_deg else self.mech(cmd, rng)
+            self.approach(cmd, via_deg, rng, lo, hi) if via_deg else self.mech(cmd, rng)
             p = self.project(self.hit(*self.beam(self.pan.pos, self.tilt.pos)))[0]
             if not self.in_frame(p, 2):
                 continue
@@ -230,7 +232,7 @@ class Rig:
 
 
 def aim_error(rig: Rig, pts, cmds, rng=None, via_deg: float = 3.0, lo=(0.0, 0.0), height: float = 0.0,
-              start=None) -> tuple[np.ndarray, np.ndarray]:
+              start=None, hi=(180.0, 180.0)) -> tuple[np.ndarray, np.ndarray]:
     """Send each command through the servos and measure where the dot lands vs the target point.
 
     Returns (angular error at the laser in deg, distance on the counter in cm) per target. Targets are visited in
@@ -241,7 +243,7 @@ def aim_error(rig: Rig, pts, cmds, rng=None, via_deg: float = 3.0, lo=(0.0, 0.0)
         rig.reset_servos(start)
     deg, cm = [], []
     for p, c in zip(np.asarray(pts, float), np.asarray(cmds, float)):
-        rig.approach(c, via_deg, rng, lo) if via_deg else rig.mech(c, rng)
+        rig.approach(c, via_deg, rng, lo, hi) if via_deg else rig.mech(c, rng)
         o, d = rig.beam(rig.pan.pos, rig.tilt.pos)
         landed = rig.hit(o, d, height)
         v = p - o
