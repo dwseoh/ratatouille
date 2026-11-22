@@ -54,7 +54,8 @@ def test_no_frame_is_503(tmp_path):
 
 def test_click_run_saves_calibration_json(rig):
     c, cw, link, out = rig
-    s = c.post("/start", json={}).json()
+    assert c.get("/state").json()["grid"]["n"] == 5                        # 5x5 by default
+    s = c.post("/start", json={"n": 4}).json()
     assert s["mode"] == "click" and s["total"] == 16 and link.laser
     assert (link.pan, link.tilt) == tuple(s["goal"])
     click_current(c, link)
@@ -91,7 +92,7 @@ def test_save_gate_and_errors(rig):
 
 def test_save_early_then_test_mode(rig):
     c, cw, link, out = rig
-    c.post("/start", json={})
+    c.post("/start", json={"n": 4})
     for _ in range(10):
         click_current(c, link)
     assert c.post("/save").json()["saved"] and out.exists()
@@ -121,7 +122,7 @@ def test_auto_run(rig, monkeypatch):
         await sleep(0)
         return None if link.pan > 110 else cam(link.pan, link.tilt)          # right column off-screen
     monkeypatch.setattr(calibrate, "blink_dot", fake_blink)
-    assert c.post("/auto", json={}).json()["mode"] == "auto"
+    assert c.post("/auto", json={"n": 4}).json()["mode"] == "auto"
     for _ in range(200):
         s = c.get("/state").json()
         if s["mode"] != "auto":
