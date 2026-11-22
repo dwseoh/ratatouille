@@ -13,6 +13,12 @@ Who builds what (A = dw127, B = Hanjing, C = Chloe)
     C: AgentAPI, StepsAPI, Recipe loading, check-ins, dashboard  (brain + dashboard)
 
 Smoke test (should print a fake turn):  cd laptop && python -m coach.contracts
+
+Additive changes after K0 (nothing removed or renamed; old code keeps working):
+- Recipe: optional `servings` + `ingredients` (amounts, substitutes). Old recipe files load unchanged.
+- State: session can be "paused" (SessionAPI); new fields step_since (StepsAPI), paused_at / paused_total_s
+  (SessionAPI), timers (Timers, C), cook_notes / servings (agent tools, C); helpers cook_clock() / step_seconds().
+- Intent: PAUSE, RESUME. TOOL_NAMES lists every agent tool. FakeSteps.go_to(); KeywordRouter knows pause/resume.
 """
 from __future__ import annotations
 
@@ -51,16 +57,30 @@ class Step:
 
 
 @dataclass(frozen=True)
+class Ingredient:
+    """One line of the shopping list, for `Recipe.servings` people. Optional: recipes without it still work."""
+    item: str                   # "avocado"
+    qty: float = 0              # amount for Recipe.servings; 0 = "to taste" (no number to scale)
+    unit: str = ""              # "", "pinch", "small handful", "tsp", "g" ...
+    note: str = ""              # "ripe: gives a little when pressed"
+    substitutes: list[str] = field(default_factory=list)   # "lemon", "leave it out"
+
+
+@dataclass(frozen=True)
 class Recipe:
     name: str
     objects: list[str]          # = YOLO classes = point_at names = keyword list. One list for all three.
     aliases: dict[str, list[str]]   # object -> other ways people say it ("lime": ["limes", "green one"])
     steps: list[Step]
+    servings: int = 0           # how many people the ingredient amounts are for (0 = not given)
+    ingredients: list[Ingredient] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> "Recipe":
         d = json.loads(Path(path).read_text())
-        return cls(d["name"], d["objects"], d.get("aliases", {}), [Step(**s) for s in d["steps"]])
+        return cls(d["name"], d["objects"], d.get("aliases", {}), [Step(**s) for s in d["steps"]],
+                   servings=int(d.get("servings", 0) or 0),
+                   ingredients=[Ingredient(**i) for i in d.get("ingredients", [])])
 
     def names(self) -> dict[str, str]:
         """Every spoken form -> canonical object name. {"limes": "lime", "green one": "lime", "lime": "lime", ...}"""
@@ -131,7 +151,7 @@ class TurnLatency:
 # C2 + C13. State: the shared blackboard. ONE WRITER PER FIELD.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-Session = Literal["idle", "active"]
+Session = Literal["idle", "active", "paused"]   # paused: the cook stepped away (step kept, coach quiet)
 
 
 @dataclass
@@ -150,6 +170,12 @@ class State:
     turns: list[TurnLatency] = field(default_factory=list)  # writer: telemetry (B)
     last_activity: float = field(default_factory=time.monotonic)  # writer: voice (B), user or coach spoke
     shown_image: tuple[int, int] | None = None   # writer: show_image tool (C): (step whose picture to show, step it was asked on)
+    step_since: float = field(default_factory=time.monotonic)   # writer: StepsAPI (C): cook_clock() when this step began
+    paused_at: float | None = None          # writer: SessionAPI (B): time.monotonic() the current pause began
+    paused_total_s: float = 0.0             # writer: SessionAPI (B): seconds paused so far (finished pauses only)
+    timers: dict[str, float] = field(default_factory=dict)   # writer: Timers (C): label -> due time.monotonic()
+    cook_notes: list[str] = field(default_factory=list)      # writer: agent `remember` tool (C): facts for the session
+    servings: int = 0                       # writer: agent `set_servings` tool (C); 0 = the recipe's own amount
 
     def log(self, source: EventSource, text: str) -> None:
         self.events.append(Event(time.time(), source, text))
@@ -165,6 +191,16 @@ class State:
         if self.shown_image and self.shown_image[1] == self.step:
             return self.shown_image[0]
         return self.step
+
+    def cook_clock(self) -> float:
+        """time.monotonic() minus every second spent paused: a clock that stands still while the cook is away."""
+        now = time.monotonic()
+        away = (now - self.paused_at) if self.paused_at is not None else 0.0
+        return now - self.paused_total_s - away
+
+    def step_seconds(self) -> float:
+        """How long the cook has been on the current step, not counting pauses."""
+        return max(0.0, self.cook_clock() - self.step_since)
 
     def visible(self) -> set[str]:
         """Object names YOLO currently sees (smoothed by the detector)."""
@@ -269,6 +305,8 @@ class Intent(str, enum.Enum):
     STOP = "stop"               # "stop", "wait", "hold on" -> Speech.stop()
     START_OVER = "start_over"   # "start over" -> Session.reset()
     OTHER = "other"             # everything else: only the agent handles it
+    PAUSE = "pause"             # "pause", "give me a sec", "hold on a minute" -> Session.pause()
+    RESUME = "resume"           # "I'm back", "resume", "continue" -> Session.resume() (when paused)
 
 
 @dataclass(frozen=True)
@@ -288,7 +326,8 @@ class IntentRouterAPI(Protocol):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OnSentence = Callable[[str], Awaitable[None]]
-TOOL_NAMES = ("point_at", "laser_off", "propose_done", "show_text")
+TOOL_NAMES = ("point_at", "point_sequence", "laser_off", "propose_done", "go_to_step", "show_text", "show_image",
+              "set_timer", "cancel_timer", "remember", "set_servings", "pause_session", "resume_session")
 
 
 @dataclass
@@ -333,6 +372,7 @@ class StepsAPI(Protocol):
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # C13. Session (owner B). idle -> BOOT press -> active. BOOT again / "start over" -> reset to idle.
+#      active <-> paused: "pause" / "I'm back", the agent's pause tool, or BOOT with --button (see session.py).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @runtime_checkable
@@ -506,15 +546,23 @@ class FakeSteps:
     def confirm(self) -> Verdict:
         if self.state.step >= len(self.state.recipe.steps) - 1:
             return "finished"
-        self.state.step += 1
-        for cb in self._cbs:
-            cb(self.state.step)
+        self._set(self.state.step + 1)
         return "advance"
 
     def reset(self) -> None:
-        self.state.step = 0
+        self._set(0)
+
+    def go_to(self, n: int, why: str = "agent") -> str:
+        """Jump to step index n (0-based), back or forward."""
+        if not 0 <= n < len(self.state.recipe.steps):
+            return f"error: there is no step {n + 1}"
+        self._set(n)
+        return "ok"
+
+    def _set(self, n: int) -> None:
+        self.state.step, self.state.step_since = n, self.state.cook_clock()
         for cb in self._cbs:
-            cb(0)
+            cb(n)
 
     def on_change(self, cb: Callable[[int], None]) -> None:
         self._cbs.append(cb)
@@ -528,6 +576,10 @@ class KeywordRouter:
 
     def classify(self, text: str) -> IntentResult:
         t = " " + " ".join(re.sub(r"[^a-z0-9' ]+", " ", text.lower()).split()) + " "   # no punctuation, single spaces
+        if any(w in t for w in (" pause ", " give me a sec", " give me a minute", " take a break ")):
+            return IntentResult(Intent.PAUSE)
+        if any(w in t for w in (" resume ", " i'm back ", " im back ", " unpause ")):
+            return IntentResult(Intent.RESUME)
         if any(w in t for w in (" stop ", " wait ", " hold on ")):
             return IntentResult(Intent.STOP)
         if "start over" in t:

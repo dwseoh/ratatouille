@@ -13,6 +13,15 @@
     "fork": ["forks"],
     "salt": ["the salt", "salt shaker"]
   },
+  "servings": 2,
+  "ingredients": [
+    {"item": "avocado", "qty": 2, "note": "ripe: the skin gives a little when you press it", "substitutes": []},
+    {"item": "onion", "qty": 0.25, "note": "red or white", "substitutes": ["2 spring onions", "half a shallot", "leave it out"]},
+    {"item": "tomato", "qty": 1, "note": "firm, not watery", "substitutes": ["6 cherry tomatoes", "leave it out"]},
+    {"item": "lime", "qty": 0.5, "note": "for juice", "substitutes": ["half a lemon", "a splash of vinegar"]},
+    {"item": "salt", "qty": 1, "unit": "pinch", "note": "more after tasting", "substitutes": []},
+    {"item": "cilantro", "qty": 1, "unit": "small handful", "note": "leaves and thin stems", "substitutes": ["parsley", "leave it out"]}
+  ],
   "steps": [
     {
       "short": "halve avocados",

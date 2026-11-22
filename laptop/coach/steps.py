@@ -13,12 +13,15 @@ Rules
   vision      -> never advance by itself: return "ask". The agent asks "looks mashed, ready for the lime?"
                  and `confirm()` advances after the user's yes. Saying "done" instead also advances.
   last step   -> "finished" instead of advancing; the step number stays on the last step.
+  go_to(n)    -> the agent's go_to_step tool: "go back to the onion step", "previous step", "skip this one".
+                 Jumps straight there (back or forward), un-finishes a finished recipe, clears the step's state.
 
 Double calls: one spoken "I'm done" reaches us twice (the intent router AND the agent's tool call). User/llm
 proposals within DEBOUNCE_S of the previous user/llm decision just repeat that verdict, so one utterance never
 advances two steps and a push-back isn't undone by the second call.
 
-Every change updates the TFT step line and fires the on_change callbacks. Sync on purpose (C7): the watcher
+Every change updates the TFT step line, restarts `State.step_since` (the step timer the agent's "stuck?" hint and
+"on this step for 3 min" use; it ignores paused time) and fires the on_change callbacks. Sync on purpose (C7): the watcher
 verdict comes from `verdict_provider`, which must return the latest CACHED verdict and never block.
 """
 from __future__ import annotations
@@ -85,6 +88,7 @@ class Steps:
     def reset(self) -> None:
         changed = self.state.step != 0
         self.state.step = 0
+        self.state.step_since = self.state.cook_clock()
         self.finished = False
         self._clear_step_state()
         self._pushed_back.clear()
@@ -92,6 +96,22 @@ class Steps:
         self.reason = ""
         if changed:
             self._changed()
+
+    def go_to(self, n: int, why: str = "agent") -> str:
+        """Jump to step index n (0-based), back or forward. Returns "ok", or an error the agent can say."""
+        s = self.state
+        total = len(s.recipe.steps)
+        if not 0 <= n < total:
+            return f"error: there is no step {n + 1}; the recipe has steps 1 to {total}"
+        if n == s.step and not self.finished:
+            return f"already on step {n + 1}"
+        s.log("system", f"{why} moved from step {s.step + 1} to step {n + 1}: {s.recipe.steps[n].short}")
+        s.step = n
+        self.finished = False
+        self._clear_step_state()
+        self._last = None                       # a "done" right after this is a new decision, not a repeat
+        self._changed()
+        return "ok"
 
     def on_change(self, cb: Callable[[int], None]) -> None:
         self._cbs.append(cb)
@@ -136,6 +156,7 @@ class Steps:
         self.reason = ""
 
     def _changed(self) -> None:
+        self.state.step_since = self.state.cook_clock()
         self._show(f"Step {self.state.step + 1}: {self.state.current_step.short}")
         for cb in self._cbs:
             cb(self.state.step)
