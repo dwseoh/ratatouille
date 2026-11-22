@@ -1,0 +1,13 @@
+{
+  "avocado": ["avocado", "whole avocado", "halved avocado"],
+  "lime": ["lime", "green lime", "lime wedge"],
+  "onion": ["onion", "red onion", "chopped onion"],
+  "tomato": ["tomato", "chopped tomato"],
+  "cilantro": ["cilantro", "bunch of cilantro"],
+  "knife": ["knife", "kitchen knife", "chef's knife"],
+  "bowl": ["bowl", "mixing bowl", "stone mortar bowl"],
+  "cutting board": ["cutting board", "wooden cutting board"],
+  "fork": ["fork"],
+  "salt": ["salt", "salt shaker"],
+  "hand": ["hand"]
+}

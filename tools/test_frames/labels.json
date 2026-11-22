@@ -1,0 +1,17 @@
+{
+  "_doc": "Ground truth for laptop/tools/eval_yolo.py. Paths are relative to this file. 'present': recipe objects (or 'hand') visible in the frame; any other class detected counts as a false positive. 'ignore': ambiguous (half visible, mashed, a spoon that might pass as a fork) - neither a hit nor a false positive. Videos: one label set for the whole clip, sampled every 'every' frames, so record clips where the set of objects doesn't change.",
+  "frames": {
+    "avocado_hold.jpg": {
+      "present": ["avocado", "hand", "bowl", "cutting board"],
+      "ignore": []
+    },
+    "avocado_halves.jpg": {
+      "present": ["avocado", "hand", "knife"],
+      "ignore": ["bowl", "cutting board"]
+    },
+    "mash_bowl.jpg": {
+      "present": ["bowl", "hand", "onion", "lime", "cutting board"],
+      "ignore": ["avocado", "fork"]
+    }
+  }
+}

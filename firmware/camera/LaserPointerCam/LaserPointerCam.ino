@@ -37,6 +37,15 @@ const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 #define GRAB_MODE    CAMERA_GRAB_WHEN_EMPTY
 #define JPEG_QUALITY 12               // lower number = better image, bigger frames
 
+// Image look (OV3660 sensor registers; no effect on frame rate). Ranges: contrast/brightness/sharpness -3..3,
+// saturation -4..4. The defaults (0) look washed out on this module. Find good values live with Freenove's
+// CameraWebServer sliders, copy them here, then DON'T change them after recording YOLO training frames
+// (a different look = different images = retrain).
+#define CONTRAST     2
+#define SATURATION   2
+#define BRIGHTNESS   0
+#define SHARPNESS    1
+
 // Camera pins: CAMERA_MODEL_WROVER_KIT (Freenove ESP32-WROVER CAM)
 #define PWDN_GPIO_NUM  -1
 #define RESET_GPIO_NUM -1
@@ -96,7 +105,12 @@ static bool cameraInit() {
     s->set_hmirror(s, 1);
     s->set_vflip(s, 1);
   }
-  s->set_brightness(s, 1);
+  s->set_contrast(s, CONTRAST);
+  s->set_saturation(s, SATURATION);
+  s->set_brightness(s, BRIGHTNESS);
+  s->set_sharpness(s, SHARPNESS);
+  Serial.printf("[boot] look: contrast %d saturation %d brightness %d sharpness %d\n",
+                CONTRAST, SATURATION, BRIGHTNESS, SHARPNESS);
   s->set_framesize(s, FRAME_SIZE);
   s->set_quality(s, JPEG_QUALITY);
   // Tip: if the laser dot washes out, lower exposure a bit:
