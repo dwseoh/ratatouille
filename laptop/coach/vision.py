@@ -20,7 +20,7 @@ from .contracts import Det  # shared detection type (name, conf, box, center)
 
 HAND = "hand"                       # extra YOLO class for the safety check, not a recipe object
 DEFAULT_CONF = 0.15
-CLASS_CONF = {HAND: 0.25}           # raise the classes that false-trigger; tune on the real counter
+CLASS_CONF = {HAND: 0.25, "lime": 0.25}   # lime 0.25: halves avocado->lime false alarms (4%->2%), 96%->91% found
 STALE_S = 1.0                       # no new camera frame for this long -> State.dets = []
 
 

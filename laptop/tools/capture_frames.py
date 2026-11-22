@@ -1,7 +1,7 @@
 """Record a labelled scene from the camera for tools/eval_yolo.py. No ingredients needed: label what's there.
 
     cd laptop && python -m tools.capture_frames bowl_board --present bowl "cutting board"
-    python -m tools.capture_frames empty_counter                         # nothing: every detection = false alarm
+    python -m tools.capture_frames bare_counter --nothing               # nothing: every detection = false alarm
     python -m tools.capture_frames knife_hand --present knife hand --ignore "cutting board" --seconds 15
     python -m tools.capture_frames green_things --cam 0                  # laptop webcam instead of the ESP cam
 
@@ -58,11 +58,16 @@ def main():
     ap.add_argument("--cam", default=CONFIG.cam_url, help="stream URL, or 0 for the laptop webcam")
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--countdown", type=float, default=3, help="seconds to get in position first")
+    ap.add_argument("--nothing", action="store_true", help="scene with no objects on purpose (false-alarm test)")
     ap.add_argument("--replace", action="store_true", help="re-record: delete this scene's old frames + labels")
     a = ap.parse_args()
 
     recipe = Recipe.load(Path(__file__).resolve().parent.parent / CONFIG.recipe_path)
     known = set(recipe.objects) | {HAND}
+    if not a.present and not a.nothing:
+        raise SystemExit("no --present objects given. List what's in view, e.g.\n"
+                         f'  python -m tools.capture_frames {a.scene} --present avocado "cutting board"\n'
+                         "or add --nothing if the scene is meant to be empty.")
     bad = (set(a.present) | set(a.ignore)) - known
     if bad:
         raise SystemExit(f"unknown objects {sorted(bad)}. Use: {', '.join(sorted(known))}")

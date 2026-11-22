@@ -1,0 +1,2728 @@
+{
+ "avo_a_000.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_001.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_002.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_003.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_004.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     239.2,
+     173.9,
+     320.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_005.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_006.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_007.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_008.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     80.2,
+     212.1,
+     176.1,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_009.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     95.6,
+     211.4,
+     190.5,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_010.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_011.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     250.3,
+     82.3,
+     319.9,
+     222.1
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_012.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     289.0,
+     113.5,
+     320.0,
+     233.4
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_013.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "avo_a_014.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     65.1,
+     205.4,
+     180.2,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_015.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     60.0,
+     195.4,
+     170.5,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_016.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     29.4,
+     147.4,
+     129.5,
+     218.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_017.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     71.6,
+     123.6,
+     153.0,
+     185.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_018.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     111.7,
+     128.3,
+     184.6,
+     190.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_019.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     141.1,
+     132.5,
+     223.1,
+     197.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_020.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     117.3,
+     143.1,
+     201.8,
+     213.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_021.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     64.2,
+     189.4,
+     161.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_022.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     64.2,
+     181.3,
+     162.8,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_023.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     57.4,
+     161.8,
+     156.8,
+     237.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_024.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     81.2,
+     123.4,
+     177.3,
+     197.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_025.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     93.3,
+     115.6,
+     188.1,
+     189.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_026.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     55.6,
+     103.5,
+     143.8,
+     176.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_027.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     58.6,
+     125.6,
+     137.1,
+     186.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_028.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     47.9,
+     133.3,
+     119.7,
+     194.5
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_029.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     17.3,
+     139.7,
+     91.6,
+     196.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_030.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     9.1,
+     143.8,
+     81.8,
+     201.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_031.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     0,
+     168.3,
+     67.0,
+     226.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_032.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     0.1,
+     154.4,
+     68.1,
+     225.5
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_033.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_034.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     39.0,
+     167.6,
+     104.6,
+     232.5
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_035.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "avo_a_036.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "avo_a_037.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     0.0,
+     109.5,
+     46.0,
+     180.2
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_038.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_039.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_040.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "avo_a_041.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     0.0,
+     184.5,
+     27.6,
+     239.8
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_042.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     5.1,
+     175.4,
+     100.3,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_043.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     27.0,
+     181.9,
+     125.4,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_044.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     104.9,
+     164.9,
+     197.6,
+     239.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_045.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     169.2,
+     138.3,
+     265.2,
+     216.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_046.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     112.6,
+     149.7,
+     207.9,
+     227.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_047.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     90.6,
+     171.5,
+     184.0,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_048.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     111.2,
+     153.2,
+     187.7,
+     215.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_049.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     95.0,
+     150.4,
+     162.5,
+     213.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_050.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     26.6,
+     196.2,
+     117.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_051.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     8.4,
+     193.2,
+     105.8,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_052.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     52.4,
+     189.3,
+     146.4,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_053.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     87.3,
+     154.1,
+     169.4,
+     219.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_054.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     80.1,
+     159.2,
+     162.4,
+     225.5
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_055.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     101.0,
+     170.3,
+     185.8,
+     239.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_056.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     28.4,
+     187.0,
+     115.2,
+     239.9
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "avo_a_057.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     13.0,
+     189.9,
+     109.8,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_058.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     75.5,
+     169.0,
+     159.2,
+     236.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "avo_a_059.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     78.8,
+     166.1,
+     158.6,
+     231.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_000.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_001.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     89.0,
+     216.0,
+     145.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_002.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     89.0,
+     213.0,
+     150.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_003.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_004.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_005.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_006.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_007.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_008.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_009.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_010.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_011.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_012.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_013.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_014.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_015.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_016.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_017.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_018.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_019.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_020.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_021.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_022.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_023.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_024.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_025.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     112.0,
+     211.0,
+     167.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_026.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_027.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_028.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_029.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_030.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     117.0,
+     223.0,
+     175.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_031.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_032.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_033.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_034.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_035.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     144.0,
+     210.0,
+     217.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_036.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     176.0,
+     213.0,
+     225.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_037.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_038.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_039.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     11.0,
+     182.0,
+     112.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_040.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_041.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_042.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_043.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_044.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     0.0,
+     119.0,
+     72.0,
+     200.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_045.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_046.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_047.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "lime_a_048.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     123.0,
+     223.0,
+     176.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_049.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_050.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     122.0,
+     223.0,
+     179.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_051.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     118.0,
+     204.0,
+     192.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_052.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "lime_a_053.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     160.0,
+     190.0,
+     240.0,
+     232.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_054.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     167.0,
+     200.0,
+     227.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_055.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     170.0,
+     196.0,
+     239.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_056.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     177.0,
+     193.0,
+     241.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_057.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     130.0,
+     199.0,
+     208.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_058.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     129.0,
+     193.0,
+     208.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "lime_a_059.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     130.0,
+     216.0,
+     192.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_000.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_001.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     46.5,
+     213.3,
+     127.5,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_002.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     93.2,
+     178.0,
+     162.1,
+     239.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_003.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     104.1,
+     160.7,
+     179.0,
+     229.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_004.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     97.5,
+     165.5,
+     170.2,
+     238.4
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_005.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     93.7,
+     190.9,
+     167.7,
+     239.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_006.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     92.7,
+     180.1,
+     157.5,
+     238.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_007.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     45.0,
+     196.0,
+     132.8,
+     239.9
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "tomato_a_008.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     46.0,
+     185.6,
+     142.1,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_009.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     124.7,
+     156.9,
+     201.3,
+     229.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_010.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     118.0,
+     138.4,
+     195.3,
+     206.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_011.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     111.9,
+     136.0,
+     185.1,
+     204.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_012.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     129.1,
+     181.9,
+     198.7,
+     239.5
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_013.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     122.8,
+     193.0,
+     185.0,
+     239.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_014.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     119.5,
+     172.4,
+     181.8,
+     238.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_015.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     95.1,
+     161.4,
+     156.5,
+     226.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_016.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     79.0,
+     137.1,
+     140.6,
+     198.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_017.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     48.5,
+     103.9,
+     121.2,
+     173.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_018.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     90.4,
+     107.3,
+     148.3,
+     161.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_019.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     134.0,
+     114.6,
+     192.6,
+     171.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_020.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "tomato_a_021.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     160.0,
+     133.8,
+     220.7,
+     190.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_022.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "tomato_a_023.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_024.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     140.8,
+     207.5,
+     221.1,
+     240.1
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "tomato_a_025.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_026.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_027.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_028.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_029.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     48.1,
+     206.0,
+     138.8,
+     239.9
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "tomato_a_030.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     76.8,
+     172.0,
+     143.0,
+     238.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_031.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     83.6,
+     147.8,
+     147.7,
+     220.5
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_032.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_033.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_034.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_035.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "tomato_a_036.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     62.8,
+     187.4,
+     144.7,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_037.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     122.6,
+     141.0,
+     190.6,
+     202.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_038.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     95.2,
+     131.9,
+     161.2,
+     192.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_039.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     128.6,
+     118.5,
+     226.5,
+     211.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_040.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     107.8,
+     101.3,
+     220.4,
+     202.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_041.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     73.1,
+     130.9,
+     212.1,
+     238.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_042.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     45.4,
+     122.5,
+     166.4,
+     227.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_043.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     108.9,
+     119.2,
+     219.2,
+     222.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "tomato_a_044.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     92.5,
+     127.7,
+     235.0,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_000.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.4,
+     143.0,
+     35.1,
+     230.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     109.4,
+     124.5,
+     203.6,
+     226.1
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     38.3,
+     160.8,
+     116.9,
+     234.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_001.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.4,
+     87.8,
+     63.8,
+     180.0
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     67.5,
+     106.9,
+     144.8,
+     185.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     132.6,
+     72.4,
+     221.8,
+     177.3
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_002.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.1,
+     114.4,
+     58.4,
+     201.1
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     62.3,
+     127.3,
+     140.3,
+     205.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     126.7,
+     92.3,
+     218.0,
+     195.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_003.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.1,
+     118.2,
+     59.0,
+     209.0
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     62.5,
+     133.2,
+     141.2,
+     212.3
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     127.8,
+     99.0,
+     218.4,
+     202.2
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_004.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.0,
+     125.4,
+     61.2,
+     216.6
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     63.9,
+     139.5,
+     142.5,
+     220.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     129.4,
+     103.4,
+     220.1,
+     208.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_005.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.1,
+     156.5,
+     75.7,
+     236.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     134.8,
+     132.5,
+     214.1,
+     227.2
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     79.3,
+     167.6,
+     147.1,
+     237.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_006.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.0,
+     139.5,
+     75.7,
+     222.3
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     78.8,
+     150.6,
+     146.6,
+     222.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     136.0,
+     113.9,
+     217.1,
+     211.1
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_007.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     158.2,
+     81.2,
+     235.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     145.1,
+     142.9,
+     228.6,
+     231.5
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     83.3,
+     174.9,
+     152.2,
+     238.2
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_008.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     151.9,
+     196.1,
+     233.8,
+     240.0
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "all3_a_009.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     38.6,
+     206.1,
+     125.4,
+     240.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     181.7,
+     185.7,
+     263.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_010.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     55.3,
+     192.5,
+     134.2,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     140.1,
+     202.1,
+     200.2,
+     239.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     182.2,
+     175.8,
+     257.5,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_011.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     168.9,
+     163.0,
+     239.2,
+     232.1
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     129.5,
+     186.3,
+     185.6,
+     239.8
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     51.5,
+     178.4,
+     126.4,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_012.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     129.4,
+     171.9,
+     188.1,
+     233.6
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     22.4,
+     186.1,
+     89.1,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     91.0,
+     191.2,
+     138.8,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_013.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     83.8,
+     197.6,
+     126.0,
+     239.9
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     21.0,
+     190.9,
+     81.0,
+     239.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     120.3,
+     180.4,
+     174.1,
+     237.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_014.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     121.3,
+     185.6,
+     171.6,
+     236.3
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     29.8,
+     193.5,
+     84.4,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     87.1,
+     201.1,
+     126.6,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_015.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "all3_a_016.jpg": {
+  "boxes": [],
+  "skip": true
+ },
+ "all3_a_017.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     89.4,
+     209.4,
+     152.6,
+     239.9
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "all3_a_018.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     157.4,
+     65.2,
+     237.5
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     124.8,
+     146.2,
+     201.0,
+     227.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     67.9,
+     144.3,
+     133.3,
+     236.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_019.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.5,
+     84.0,
+     66.1,
+     208.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     154.5,
+     63.9,
+     277.5,
+     189.4
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     72.5,
+     101.5,
+     176.5,
+     205.6
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_020.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "all3_a_021.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     74.6,
+     62.8,
+     210.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     166.4,
+     60.4,
+     319.4,
+     202.4
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_022.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     45.3,
+     140.9,
+     186.3,
+     239.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     149.9,
+     89.9,
+     318.5,
+     239.6
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     0,
+     123.9,
+     38.1,
+     239.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_023.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.0,
+     179.8,
+     33.3,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     45.5,
+     195.0,
+     171.4,
+     240.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     144.7,
+     136.2,
+     312.6,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_024.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     141.5,
+     65.2,
+     239.7
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     74.1,
+     157.1,
+     200.0,
+     239.8
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     167.9,
+     107.6,
+     319.0,
+     239.4
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_025.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     135.0,
+     93.7,
+     239.8
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     99.4,
+     156.1,
+     217.3,
+     239.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     185.1,
+     109.8,
+     319.9,
+     239.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_026.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     0.2,
+     159.0,
+     66.9,
+     239.8
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     139.6,
+     135.9,
+     233.0,
+     231.7
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     75.2,
+     171.2,
+     146.8,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_027.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     45.5,
+     155.6,
+     127.6,
+     229.6
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     132.0,
+     165.4,
+     195.5,
+     229.2
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     183.0,
+     139.2,
+     258.8,
+     221.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_028.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     177.7,
+     154.6,
+     236.0,
+     212.8
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     222.9,
+     130.3,
+     295.1,
+     204.9
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     101.1,
+     144.7,
+     173.8,
+     212.2
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_029.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     236.1,
+     138.2,
+     312.9,
+     211.5
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     192.0,
+     159.2,
+     251.2,
+     218.3
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     114.6,
+     151.3,
+     188.5,
+     218.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_030.jpg": {
+  "boxes": [
+   {
+    "cls": "tomato",
+    "box": [
+     74.3,
+     190.8,
+     161.0,
+     240.0
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     164.3,
+     189.6,
+     232.7,
+     239.9
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     199.8,
+     158.9,
+     288.2,
+     236.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_031.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     190.2,
+     204.8,
+     258.0,
+     239.9
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     99.8,
+     205.3,
+     190.4,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_032.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     188.5,
+     203.4,
+     258.9,
+     240.0
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     97.3,
+     205.8,
+     195.3,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_033.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     188.0,
+     203.8,
+     257.3,
+     240.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     203.6,
+     168.3,
+     303.6,
+     239.9
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     96.0,
+     206.0,
+     194.0,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_034.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     174.9,
+     205.6,
+     247.0,
+     240.0
+    ]
+   },
+   {
+    "cls": "avocado",
+    "box": [
+     195.8,
+     168.9,
+     293.7,
+     239.9
+    ]
+   },
+   {
+    "cls": "tomato",
+    "box": [
+     82.8,
+     207.8,
+     176.3,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_035.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     119.5,
+     152.9,
+     202.0,
+     236.4
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     72.0,
+     185.1,
+     140.3,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_036.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     78.0,
+     142.0,
+     162.2,
+     230.4
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     14.0,
+     173.6,
+     83.6,
+     239.7
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_037.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     50.6,
+     159.9,
+     135.3,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     0.0,
+     190.5,
+     54.2,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_038.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     44.8,
+     160.4,
+     122.4,
+     239.9
+    ]
+   },
+   {
+    "cls": "lime",
+    "box": [
+     0.0,
+     188.7,
+     45.9,
+     239.9
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_039.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     82.8,
+     190.5,
+     153.9,
+     239.8
+    ]
+   }
+  ],
+  "skip": false
+ },
+ "all3_a_040.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "all3_a_041.jpg": {
+  "boxes": [],
+  "skip": false
+ },
+ "all3_a_042.jpg": {
+  "boxes": [
+   {
+    "cls": "lime",
+    "box": [
+     5.3,
+     214.9,
+     82.5,
+     240.0
+    ]
+   }
+  ],
+  "skip": true
+ },
+ "all3_a_043.jpg": {
+  "boxes": [
+   {
+    "cls": "avocado",
+    "box": [
+     139.0,
+     214.8,
+     216.1,
+     240.0
+    ]
+   }
+  ],
+  "skip": false
+ }
+}
