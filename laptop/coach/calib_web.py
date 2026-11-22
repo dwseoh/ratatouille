@@ -1,8 +1,11 @@
 """Calibration in the browser: python -m coach.calib_web   (run from laptop/, then open http://127.0.0.1:8001)
 
-Same steps as coach.calibrate, same calibration.json: live camera frame, the servos visit the grid, you click the
-laser dot on the image (s skip, r redo, t test mode, Save). "Auto" runs calibrate --auto's dot finder + blink check
-instead of clicks. All the logic (grid, session, fit + save gate, auto sweep, test aim) comes from calibrate.py.
+Same steps as coach.calibrate, same calibration.json: live camera frame, the servos visit the grid (5x5, every point
+approached the same way: pan from below, tilt from above), you click the laser dot on the image (s skip, r redo,
+t test mode, Save). A click near the dot snaps to its centre; clicks only count once the servos stopped and a newer frame is on screen. "Auto" runs
+calibrate --auto's dot finder + blink check instead of clicks. "Verify" sends the laser to random spots and measures
+where the dot lands (click it, or "Auto verify" finds it), printing the error in degrees and cm; "Add verify points"
+refits with them. All the logic (grid, session, fit + save gate, auto sweep, verify) comes from calibrate.py.
 
     python -m coach.calib_web --cam black --no-s3          # no hardware: black frames, in-process FakeLink
     python -m coach.calib_web --cam 0 --ctl 127.0.0.1      # webcam + tools/fake_s3.py
@@ -30,15 +33,24 @@ from pydantic import BaseModel
 from .aim import Calibration
 from .calibrate import (
     AUTO_SETTLE_S,
+    DEFAULT_N,
     DEFAULT_OUT,
     SETTLE_S,
+    VERIFY_N,
     CalibSession,
+    Mover,
+    VerifySession,
     add_grid_args,
     aim_at_pixel,
     auto_sweep,
+    auto_verify,
     draw_points,
     finish,
+    frame_fresh,
+    frame_size,
     make_grid,
+    session_from,
+    snap_to_dot,
 )
 from .contracts import ControlLinkAPI, FrameSource
 from .dot import LAG_S
@@ -68,11 +80,14 @@ class CalibWeb:
                  grid: dict | None = None, settle_s: float = SETTLE_S, auto_settle_s: float = AUTO_SETTLE_S,
                  lag_s: float = LAG_S, clock: Callable[[], float] = time.monotonic):
         self.link, self.frames, self.out = link, frames, Path(out)
-        self.grid = {"pan_min": 60.0, "pan_max": 120.0, "tilt_min": 30.0, "tilt_max": 90.0, "n": 4, **(grid or {})}
+        self.grid = {"pan_min": 60.0, "pan_max": 120.0, "tilt_min": 30.0, "tilt_max": 90.0, "n": DEFAULT_N,
+                     **(grid or {})}
         self.settle_s, self.auto_settle_s, self.lag_s, self.clock = settle_s, auto_settle_s, lag_s, clock
         self.calib = Calibration.load(self.out) if self.out.exists() else None
         self.sess: CalibSession | None = None
-        self.mode = "idle"              # idle | click | test | auto
+        self.verify: VerifySession | None = None
+        self.mover = Mover(link, clock=clock)
+        self.mode = "idle"              # idle | click | test | auto | verify | auto_verify
         self.saved = False
         self.lines: list[str] = []
         self.moved_at = 0.0
@@ -100,21 +115,29 @@ class CalibWeb:
         self._move()
 
     def _move(self) -> None:
-        goal = self.sess.current() if self.sess else None
+        if self.mode == "verify":
+            goal = self.verify.current()[1] if self.verify and not self.verify.done else None
+        else:
+            goal = self.sess.current() if self.sess else None
         if goal is not None:
-            self.link.pan, self.link.tilt = goal
+            self.mover.go(goal)         # same approach direction as the Aimer (servo backlash)
             self.moved_at = self.clock()
 
     @property
     def settled(self) -> bool:
-        if getattr(self.link, "moving", False):     # servos still ramping: settle time starts on arrival
-            self.moved_at = self.clock()
-            return False
-        return self.clock() - self.moved_at >= self.settle_s
+        """Servos stopped (ControlLink's ramp done) + settle time passed + a frame newer than that arrived."""
+        return self.mover.settled(self.settle_s) and frame_fresh(self.frames, self.mover, self.settle_s)
+
+    def _snap(self, x: float, y: float) -> tuple[float, float, str]:
+        x, y, snapped = snap_to_dot(self.frames.latest()[0], x, y)
+        return x, y, " (snapped to the dot)" if snapped else ""
 
     def click(self, x: float, y: float) -> None:
         if self.mode == "test":
             self.test(x, y)
+            return
+        if self.mode == "verify":
+            self._verify_click(x, y)
             return
         self._need_click_mode()
         if self.sess.done:
@@ -122,11 +145,16 @@ class CalibWeb:
         if not self.settled:
             raise ValueError("still settling, click again")
         goal = self.sess.current()
+        x, y, tag = self._snap(x, y)
         self.sess.click(x, y)
-        self.log(f"point {self.sess.i}/{len(self.sess.grid)}: ({x:.0f},{y:.0f}) -> {goal}")
+        self.log(f"point {self.sess.i}/{len(self.sess.grid)}: ({x:.1f},{y:.1f}) -> {goal}{tag}")
         self._advance()
 
     def skip(self) -> None:
+        if self.mode == "verify" and self.verify is not None:
+            self.verify.skip()
+            self._verify_next()
+            return
         self._need_click_mode()
         self.sess.skip()
         self._advance()
@@ -145,16 +173,16 @@ class CalibWeb:
 
     def save(self) -> bool:
         """finish() from calibrate.py: fit, save calibration.json, report. False if too few points."""
-        if self.sess is None or self.mode == "auto":
+        if self.sess is None or self.mode in ("auto", "auto_verify"):
             raise ValueError("nothing to save")
-        calib = finish(self.sess, self.out, self.log)
+        calib = finish(self.sess, self.out, self.log, frame=frame_size(self.frames))
         self.saved = calib is not None
         self.calib = calib or self.calib
         return self.saved
 
     def toggle_test(self) -> None:
-        if self.mode == "auto":
-            raise ValueError("auto calibration is running")
+        if self.mode in ("auto", "auto_verify"):
+            raise ValueError("auto run in progress")
         if self.mode == "test":
             self.mode = "click" if self.sess else "idle"
             self.link.laser = self.mode == "click"
@@ -167,11 +195,81 @@ class CalibWeb:
         self.log(f"test mode {'on' if self.mode == 'test' else 'off'}")
 
     def test(self, x: float, y: float) -> None:
-        p, t = aim_at_pixel(self.calib, self.link, (x, y))
+        p, t = aim_at_pixel(self.calib, self.link, (x, y), self.mover)
         self.log(f"test: ({x:.0f},{y:.0f}) -> pan {p:.1f} tilt {t:.1f}")
+
+    # ── verify ──────────────────────────────────────────────────────────────
+    def start_verify(self, n: int = VERIFY_N) -> None:
+        """The laser visits n random reachable spots; click where the dot really is (s if it isn't visible)."""
+        if self.mode in ("auto", "auto_verify"):
+            raise ValueError("auto run in progress")
+        if self.calib is None:
+            raise ValueError("no calibration yet")
+        self.verify = VerifySession(self.calib, n, frame=frame_size(self.frames))
+        if not self.verify.targets:
+            raise ValueError("no reachable spots to verify (check PAN_*/TILT_* in .env)")
+        self.mode = "verify"
+        self.link.laser = True
+        self.log(f"verify: {len(self.verify.targets)} random spots. Click the dot each time (s if not visible).")
+        self._move()
+
+    def _verify_click(self, x: float, y: float) -> None:
+        if self.verify is None or self.verify.done:
+            raise ValueError("verify done")
+        if not self.settled:
+            raise ValueError("still settling, click again")
+        x, y, tag = self._snap(x, y)
+        (tx, ty), _ = self.verify.current()
+        self.verify.record((x, y))
+        self.log(f"verify {self.verify.i}/{len(self.verify.targets)}: sent to ({tx:.0f},{ty:.0f}), dot at "
+                 f"({x:.1f},{y:.1f}){tag}")
+        self._verify_next()
+
+    def _verify_next(self) -> None:
+        if self.verify.done:
+            for ln in self.verify.summary()[0][-1:]:
+                self.log(ln)
+            self.mode = "click" if self.sess else "idle"
+            self.link.laser = False
+        else:
+            self._move()
+
+    def start_auto_verify(self, n: int = VERIFY_N) -> None:
+        """Verify with the dot finder + blink check in the background."""
+        self.start_verify(n)
+        self.mode = "auto_verify"
+        self._auto = asyncio.create_task(self._run_auto_verify(self.verify))
+
+    async def _run_auto_verify(self, vs: VerifySession) -> None:
+        try:
+            await auto_verify(self.link, self.frames, vs, settle_s=self.auto_settle_s, lag_s=self.lag_s,
+                              log=self.log, mover=self.mover)
+        except asyncio.CancelledError:
+            self.log("auto verify stopped")
+            raise
+        except Exception as e:
+            self.log(f"auto verify failed: {e!r}")
+        finally:
+            self.link.laser = False
+            if self.mode == "auto_verify":
+                self.mode = "click" if self.sess else "idle"
+
+    def add_verify(self) -> None:
+        """Refit with the verify measurements added to the calibration points (they're real points too)."""
+        if self.verify is None or not self.verify.done:
+            raise ValueError("run a verify first")
+        if self.sess is None:
+            self.sess = session_from(self.calib)
+        n = self.verify.add_to(self.sess)
+        self.log(f"added {n} verify points, refitting")
+        self.verify = None
+        self.mode = "click"
+        self.save()
 
     def start_auto(self, g: GridIn | None = None) -> None:
         """calibrate --auto in the background; the page shows its progress."""
+        if self.mode == "auto_verify":
+            raise ValueError("auto verify in progress")
         self._cancel_auto()
         grid = self._grid(g)
         self.sess, self.mode, self.saved = CalibSession(grid), "auto", False
@@ -181,7 +279,7 @@ class CalibWeb:
     async def _run_auto(self, sess: CalibSession) -> None:
         try:
             await auto_sweep(self.link, self.frames, sess.grid, settle_s=self.auto_settle_s, lag_s=self.lag_s,
-                             log=self.log, sess=sess)
+                             log=self.log, sess=sess, mover=self.mover)
             self.link.laser = False
             self.mode = "click"         # redo / skip / test work on the result, like after a click run
             self.save()
@@ -213,14 +311,16 @@ class CalibWeb:
         """Laser off if no request (the page polls /state) for timeout_s: tab closed. Auto runs are left alone."""
         while True:
             await asyncio.sleep(0.5)
-            if self.mode in ("click", "test") and self.clock() - self.seen_at > timeout_s:
+            if self.mode in ("click", "test", "verify") and self.clock() - self.seen_at > timeout_s:
                 self.log("page gone")
                 self.stop()
 
     # ── views ───────────────────────────────────────────────────────────────
     def status(self) -> dict:
-        s = self.sess
+        s, v = self.sess, self.verify
         goal = s.current() if s else None
+        if self.mode in ("verify", "auto_verify") and v is not None and not v.done:
+            goal = v.current()[1]
         return {
             "mode": self.mode,
             "index": s.i if s else 0,
@@ -236,6 +336,10 @@ class CalibWeb:
             "out": str(self.out),
             "laser": bool(self.link.laser),
             "camera": bool(getattr(self.frames, "connected", True)),
+            "verify": None if v is None else {"index": v.i, "total": len(v.targets), "done": v.done,
+                                              "target": None if v.done else v.current()[0],
+                                              "stats": v.summary()[1] if v.done else None},
+            "model": self.calib.model if self.calib is not None else None,
             "grid": self.grid,
             "log": self.lines,
         }
@@ -244,8 +348,8 @@ class CalibWeb:
         frame, _ = self.frames.latest()
         if frame is None:
             return None
-        if self.sess is not None:
-            frame = draw_points(frame, self.sess)
+        if self.sess is not None or self.verify is not None:
+            frame = draw_points(frame, self.sess, self.verify)
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return buf.tobytes() if ok else None
 
@@ -312,6 +416,18 @@ def make_router(cw: CalibWeb, prefix: str = "") -> APIRouter:
     @r.post("/stop")
     async def stop():
         return act(cw.stop)
+
+    @r.post("/verify")
+    async def verify():
+        return act(cw.start_verify)
+
+    @r.post("/verify_auto")
+    async def verify_auto():
+        return act(cw.start_auto_verify)
+
+    @r.post("/verify_add")
+    async def verify_add():
+        return act(cw.add_verify)
 
     return r
 
@@ -424,6 +540,11 @@ PAGE = """<!doctype html>
    <button id="b-test">Test mode <kbd>t</kbd></button>
    <button class="primary" id="b-save">Save</button>
   </div>
+  <div class="bar">
+   <button id="b-verify">Verify <kbd>v</kbd></button>
+   <button id="b-vauto">Auto verify</button>
+   <button id="b-vadd">Add verify points</button>
+  </div>
   <div class="bar mute">
    pan <input id="pan_min"> to <input id="pan_max"><br>
    tilt <input id="tilt_min"> to <input id="tilt_max"> &nbsp; n <input id="n">
@@ -454,6 +575,9 @@ function render(s) {
   if (!gridShown) { for (const f of FIELDS) $(f).value = s.grid[f]; gridShown = true; }
   let m;
   if (s.mode === "test") m = "TEST: click a spot, the laser goes there";
+  else if (s.mode === "verify" && s.verify) m = `verify ${s.verify.index + 1}/${s.verify.total}: ` +
+      (s.settled ? "click the laser dot (s: not visible)" : "settling...");
+  else if (s.mode === "auto_verify" && s.verify) m = `auto verify ${Math.min(s.verify.index + 1, s.verify.total)}/${s.verify.total}...`;
   else if (s.mode === "auto") m = `auto: point ${Math.min(s.index + 1, s.total)}/${s.total}, finding the dot...`;
   else if (s.mode === "click" && s.goal) m = `${s.index + 1}/${s.total} pan ${s.goal[0].toFixed(0)} tilt ${s.goal[1].toFixed(0)}: `
       + (s.settled ? "click the laser dot" : "settling...");
@@ -461,12 +585,16 @@ function render(s) {
   else m = "Start a click run (or Auto). The laser turns on.";
   $("msg").textContent = m;
   $("info").textContent = `${s.n_points} points` + (s.can_save ? "" : " (need 9 to save)") +
-    ` | laser ${s.laser ? "ON" : "off"} | camera ${s.camera ? "ok" : "DOWN"} | ${s.has_calib ? "calibration loaded" : "no calibration yet"} | ${s.out}`;
-  const click = s.mode === "click";
-  $("b-skip").disabled = !click || s.done;
+    ` | laser ${s.laser ? "ON" : "off"} | camera ${s.camera ? "ok" : "DOWN"} | ${s.has_calib ? "calibration loaded (" + s.model + ")" : "no calibration yet"} | ${s.out}` +
+    (s.verify && s.verify.stats && s.verify.stats.n ? ` | verify mean ${s.verify.stats.mean_deg.toFixed(2)} deg (~${s.verify.stats.mean_cm.toFixed(1)} cm), max ${s.verify.stats.max_deg.toFixed(2)} deg` : "");
+  const click = s.mode === "click", busy = s.mode === "auto" || s.mode === "auto_verify";
+  $("b-verify").disabled = busy || !s.has_calib;
+  $("b-vauto").disabled = busy || !s.has_calib;
+  $("b-vadd").disabled = busy || !(s.verify && s.verify.done);
+  $("b-skip").disabled = !(click || s.mode === "verify") || (click && s.done);
   $("b-redo").disabled = !click || s.index === 0;
   $("b-save").disabled = !click || !s.can_save;
-  $("b-test").disabled = s.mode === "auto" || (!s.has_calib && s.mode !== "test");
+  $("b-test").disabled = busy || (!s.has_calib && s.mode !== "test");
   $("b-test").textContent = s.mode === "test" ? "Leave test mode" : "Test mode";
   const log = $("log"), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   log.textContent = s.log.join("\\n");
@@ -494,9 +622,12 @@ $("b-skip").onclick = () => post("/skip");
 $("b-redo").onclick = () => post("/redo");
 $("b-test").onclick = () => post("/test");
 $("b-save").onclick = () => post("/save");
+$("b-verify").onclick = () => post("/verify");
+$("b-vauto").onclick = () => post("/verify_auto");
+$("b-vadd").onclick = () => post("/verify_add");
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
-  const b = {s: "b-skip", r: "b-redo", t: "b-test"}[e.key];
+  const b = {s: "b-skip", r: "b-redo", t: "b-test", v: "b-verify"}[e.key];
   if (b && !$(b).disabled) $(b).click();
 });
 setInterval(poll, 250); poll(); refreshFrame();

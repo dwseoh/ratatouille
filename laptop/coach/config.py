@@ -76,5 +76,15 @@ class Config:
     dashboard_port: int = int(_env("DASHBOARD_PORT", "8000"))
     laser_close_px: int = 10          # dot within this many px of the target = on target
 
+    # Aiming (docs/aiming.md). Where in a YOLO box the laser aims: 0 = top edge, 0.5 = centre, 1 = bottom. The laser
+    # sits ~12 cm above the lens, so aiming at the box centre puts the dot high on a fruit; 0.6 lands it mid-fruit.
+    aim_y: float = float(_env("AIM_Y", "0.6"))
+    # Calibration model: auto (what calibrate picked by cross-validation), plane (physical) or poly (v1 polynomial).
+    calib_model: str = _env("CALIB_MODEL", "auto")
+    # Starting values for the physical calibration model (it fits around them): laser pivot height above the camera
+    # lens in cm, and the camera's horizontal field of view in degrees.
+    laser_above_cm: float = float(_env("LASER_ABOVE_CM", "12"))
+    cam_hfov_deg: float = float(_env("CAM_HFOV_DEG", "64"))
+
 
 CONFIG = Config()

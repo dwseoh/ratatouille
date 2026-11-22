@@ -4,6 +4,9 @@ Use it before calibrating, to find the pan/tilt range where the laser dot is ins
 A window shows the camera (turned by CAM_ROTATE) with the current angles. Steer the dot to each edge of the
 picture and press m to mark it. When you quit, it prints the calibrate command for the marked range.
 
+After calibrating it doubles as an accuracy check: if laptop/calibration.json exists, a cyan circle shows where the
+calibration expects the dot for the current angles. Jog anywhere; the real dot should sit inside the circle.
+
 Keys (click the window first):
     a / d   pan  -2 / +2 deg        A / D   pan  -10 / +10
     s / w   tilt -2 / +2 deg        S / W   tilt -10 / +10
@@ -18,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 
 def _limits():
     from .config import CONFIG
@@ -64,6 +68,33 @@ class Jog:
                 f"--tilt-min {t0:.0f} --tilt-max {t1:.0f}")
 
 
+def predicted_dot(calib, pan: float, tilt: float, frame_shape, rotate=None) -> tuple[int, int] | None:
+    """Where calib expects the dot for (pan, tilt), in this frame's pixels (rescaled if the size changed). None if it
+    can't say (no calibration, rotation mismatch, off the counter plane, outside the frame)."""
+    if calib is None:
+        return None
+    h, w = frame_shape[:2]
+    fc = calib.frame_check((w, h), rotate)
+    if not fc.ok:
+        return None
+    try:
+        x, y = fc.to_runtime(calib.pixel_for((pan, tilt)))
+    except (RuntimeError, ValueError, TypeError):
+        return None
+    if not (x == x and y == y) or not (0 <= x < w and 0 <= y < h):     # NaN or off-screen
+        return None
+    return int(round(x)), int(round(y))
+
+
+def _load_calib(path):
+    from .aim import Calibration
+    try:
+        return Calibration.load(path) if Path(path).exists() else None
+    except (ValueError, KeyError, OSError) as e:
+        print(f"can't read {path}: {e}")
+        return None
+
+
 async def _main(args) -> None:
     import cv2
 
@@ -75,6 +106,9 @@ async def _main(args) -> None:
     frames = FrameGrabber(int(cam) if str(cam).isdigit() else cam).start()
     link = await ControlLink(args.ctl or CONFIG.ctl_host, CONFIG.ctl_port).start()
     jog = Jog()
+    calib = _load_calib(args.calib)
+    if calib is not None:
+        print(f"{args.calib}: the cyan circle is where it expects the dot ({calib.model} model)")
     win = "jog (a/d pan, w/s tilt, l laser, m mark, q quit)"
     cv2.namedWindow(win)
     print(__doc__.split("Keys")[1].split("Uses")[0])
@@ -88,6 +122,9 @@ async def _main(args) -> None:
                 msg = (f"pan {jog.pan:.0f}  tilt {jog.tilt:.0f}  laser {'ON' if jog.laser else 'off'}  "
                        f"S3 {'online' if link.online else 'OFFLINE'}  marks {len(jog.marks)}")
                 cv2.putText(img, msg, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+                p = predicted_dot(calib, jog.pan, jog.tilt, img.shape, CONFIG.cam_rotate)
+                if p is not None:
+                    cv2.circle(img, p, max(6, img.shape[1] // 40), (255, 255, 0), 1)
                 cv2.imshow(win, img)
             else:
                 blank = __import__("numpy").zeros((240, 640, 3), "uint8")
@@ -118,6 +155,8 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cam", default=None, help="camera URL (default CAM_URL from laptop/.env)")
     ap.add_argument("--ctl", default=None, help="S3 IP or host (default CTL_HOST from laptop/.env)")
+    ap.add_argument("--calib", default=str(Path(__file__).resolve().parent.parent / "calibration.json"),
+                    help="calibration to overlay (default laptop/calibration.json)")
     asyncio.run(_main(ap.parse_args(argv)))
 
 

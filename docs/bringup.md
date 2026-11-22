@@ -70,18 +70,35 @@ laser can never leave the camera's view (the counter) and point at people. The S
 
 ## 6. Calibrate
 
-Stand where you'll demo, same counter distance. Use the range from step 4, a few degrees inside it:
+Set the camera resolution and `CAM_ROTATE` you'll demo with **first** (the calibration records both). Stand the way
+you'll stand during the demo, same counter distance: the laser sits 12 cm above the lens, so every 5 cm the counter
+is nearer or further than at calibration costs ~1 deg (~2 cm). Use the range from step 4, a few degrees inside it,
+and keep `TILT_MAX` in `.env` at least 3 deg above `--tilt-max` (each point is approached from 3 deg above in tilt):
 
 ```bash
 python3 -m coach.calibrate --pan-min 75 --pan-max 125 --tilt-min 3 --tilt-max 17
 ```
 
-- Wait for **"click the dot"**, click the centre of the dot. `s` skip (dot off-screen), `r` redo, `q` quit.
-- After 16 points it saves `laptop/calibration.json` and prints the error per point: **under ~2° is good**.
-- Press `t`, click spots on the picture: the laser should land within a few cm. `q` to finish.
-- Browser version, same result: `python3 -m coach.calib_web`, then open http://127.0.0.1:8001.
+- 5x5 grid (25 points, `-n 4` for the old 16). Wait for **"click the dot"**, then click the dot: clicks before that
+  are ignored, and a click near the dot snaps to its centre. `s` skip (dot off-screen), `r` redo, `q` quit.
+- The dot must land on the counter (or a flat board on it), not on a back wall.
+- At the end it prints each point's error in deg and cm (redo anything marked `WARN` / `bad click?`), both models'
+  errors (`plane` = physical model, `poly` = old polynomial; the lower leave-one-out one is used) and saves
+  `laptop/calibration.json`. **Good: points under ~0.5 deg, leave-one-out under ~0.6 deg.**
+- Press `v` to **verify**: the laser visits 8 random spots (cross = where it was sent), click the dot each time.
+  It prints `VERIFY: mean ... deg (~cm), max ...`. **Good: mean under ~0.6 deg, max under ~1.5 deg.** `a` adds those
+  points to the calibration and refits.
+- `t` test mode: click spots on the picture, the laser goes there. `q` to finish.
+- Re-check later without clicking (dot finder): `python3 -m coach.calibrate --check`.
+- Check the saved file any time (no hardware): `python3 -m coach.calibrate --eval`.
+- `python3 -m coach.jog` now shows a cyan circle where the calibration expects the dot: jog around, the dot should
+  stay in it everywhere.
+- Browser version, same result (plus **Verify** / **Auto verify** / **Add verify points**):
+  `python3 -m coach.calib_web`, then open http://127.0.0.1:8001.
 
-Redo calibration whenever the camera or pan-tilt moves, `CAM_ROTATE` changes, or the horn is re-seated.
+Redo calibration whenever the camera or pan-tilt moves, `CAM_ROTATE` changes (the laser refuses to aim until you
+do: TFT "CALIB ROTATE: recal"), or the horn is re-seated. A resolution change is rescaled automatically (TFT
+"CALIB 320x240 SCALED"), but recalibrating at the new resolution is better. Details: [aiming.md](aiming.md).
 
 ## 7. Aiming tests
 
@@ -92,7 +109,7 @@ python3 -m coach.main                                  # full voice run: "hey Re
 ```
 
 Put the ingredients **inside the reachable area** (tape it off on the counter). Objects outside it can't be
-pointed at.
+pointed at: `point_at` answers `out_of_reach` and the laser stays off (logged with the pixel and the limits).
 
 ## Troubleshooting
 

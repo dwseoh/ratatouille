@@ -108,7 +108,8 @@ def test_limits_default_to_config_full_range():
 def rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    aimer = Aimer(link, linear_calib(), st, clock=clock, limits=LIMITS)
+    aimer = Aimer(link, linear_calib(), st, clock=clock, limits=LIMITS, aim_y=0.5,   # aim at the box centre
+                  frame_size=lambda: None)
     return aimer, link, st, clock
 
 
@@ -160,30 +161,98 @@ def test_deadband(rig):
     assert (link.pan, link.tilt) == (pan, tilt) and aimer.on_target
 
 
-def test_smoothing_mean_of_last_three(rig):
+def test_smoothing_median_of_new_detections_and_jumps(rig):
     aimer, link, st, clock = rig
     aimer.point_at("lime")
     others = [d for d in st.dets if d.name != "lime"]
-    for cx in (100, 200, 600):
+    xs = (296, 300, 304, 302, 314, 299)                     # YOLO jitter, one box 12 px off
+    for cx in xs:
         st.dets = others + [box_at("lime", cx, 240)]
-        run_ticks(aimer, clock, 1)
-    assert aimer.goal[0] == pytest.approx(30 + 300 / 8)     # mean x = 300
+        run_ticks(aimer, clock, 3)                          # the same box for 3 ticks counts once
+    med = float(np.median(xs[-Aimer.SMOOTH_N:]))            # median of the last SMOOTH_N boxes: 302
+    assert aimer.goal[0] == pytest.approx(30 + med / 8)
+    st.dets = others + [box_at("lime", 600, 240)]           # the lime moved: start over, don't average across
+    run_ticks(aimer, clock, 1)
+    assert aimer.goal[0] == pytest.approx(30 + 600 / 8)
 
 
-def test_clamp_pan(rig):
+def test_sticks_to_the_tracked_instance(rig):
     aimer, link, st, clock = rig
-    aimer.calib = Calibration().fit(grid_pixels(), [(200.0, 60.0)] * 25)   # everything maps to pan 200
+    others = [d for d in st.dets if d.name != "lime"]
+    st.dets = others + [Det("lime", 0.9, (290, 230, 310, 250))]
     aimer.point_at("lime")
+    run_ticks(aimer, clock, 2)
+    # a second lime shows up with a higher confidence: keep pointing at the first one
+    st.dets = others + [Det("lime", 0.8, (292, 230, 312, 250)), Det("lime", 0.95, (490, 230, 510, 250))]
     run_ticks(aimer, clock, 60)
-    assert link.pan == pytest.approx(170.0) and aimer.on_target
+    assert aimer.goal[0] == pytest.approx(30 + 301 / 8, abs=0.2) and aimer.on_target
 
 
-def test_clamp_tilt(rig):
+def test_out_of_reach_is_reported_and_laser_stays_off(rig):
+    aimer, link, st, clock = rig
+    aimer.calib = Calibration().fit(grid_pixels(), [(200.0, 60.0)] * 25)   # everything maps to pan 200 (limit 170)
+    assert aimer.point_at("lime") == "out_of_reach"
+    assert not link.laser and aimer.target is None and not aimer.on_target and not st.on_target
+    run_ticks(aimer, clock, 30)
+    assert (link.pan, link.tilt) == (90.0, 60.0)
+
+
+def test_bad_fit_aiming_up_never_commanded(rig):
     aimer, link, st, clock = rig
     aimer.calib = Calibration().fit(grid_pixels(), [(90.0, 150.0)] * 25)   # a bad fit: tilt 150 (aims up)
+    assert aimer.point_at("lime") == "out_of_reach"
+    run_ticks(aimer, clock, 60)
+    assert link.tilt <= aimer.TILT_MAX and not link.laser and not aimer.on_target
+
+
+def test_just_past_a_limit_is_clamped_and_still_on_target(rig):
+    aimer, link, st, clock = rig
+    aimer.calib = Calibration().fit(grid_pixels(), [(170.6, 60.0)] * 25)   # within REACH_TOL_DEG of PAN_MAX
+    assert aimer.point_at("lime") == "ok"
+    run_ticks(aimer, clock, 60)
+    assert link.pan == pytest.approx(170.0) and aimer.on_target and link.laser
+
+
+def test_half_reachable_box_gets_the_dot_on_its_reachable_part(rig):
+    aimer, link, st, clock = rig
+    others = [d for d in st.dets if d.name != "lime"]
+    st.dets = others + [Det("lime", 0.9, (300, 540, 340, 640))]    # tilt = 90 - y/8: 22.5 .. 10 (limit 20)
+    assert aimer.point_at("lime") == "ok"
+    run_ticks(aimer, clock, 60)
+    assert aimer.on_target and link.laser and link.tilt >= aimer.TILT_MIN - 1e-9
+    assert 540 < aimer.aim_px[1] <= (90 - aimer.TILT_MIN + aimer.REACH_TOL_DEG) * 8   # in the box, reachable part
+
+
+def test_target_moving_out_of_reach_and_back(rig):
+    aimer, link, st, clock = rig
+    others = [d for d in st.dets if d.name != "lime"]
     aimer.point_at("lime")
     run_ticks(aimer, clock, 60)
-    assert link.tilt == pytest.approx(aimer.TILT_MAX) and aimer.on_target
+    assert aimer.on_target and link.laser
+    st.dets = others + [box_at("lime", 320, 700)]          # tilt 2.5: below TILT_MIN 20
+    run_ticks(aimer, clock, 2)
+    assert not link.laser and not aimer.on_target and aimer.target == "lime" and not aimer.reachable
+    st.dets = others + [box_at("lime", 320, 300)]
+    run_ticks(aimer, clock, 60)
+    assert link.laser and aimer.on_target and aimer.reachable
+
+
+def test_final_approach_is_always_the_same_way(rig):
+    aimer, link, st, clock = rig
+    others = [d for d in st.dets if d.name != "lime"]
+    for x, y in ((500, 100), (200, 300), (400, 200), (100, 50)):
+        st.dets = others + [box_at("lime", x, y)]
+        aimer.point_at("lime")
+        trail = [(link.pan, link.tilt)]
+        for _ in range(80):
+            run_ticks(aimer, clock, 1)
+            trail.append((link.pan, link.tilt))
+            if aimer.on_target:
+                break
+        assert aimer.on_target
+        moves = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(trail, trail[1:]) if a != b]
+        assert moves and moves[-1][0] >= 0 and moves[-1][1] <= 0   # last move: pan up, tilt down (APPROACH_DIR)
+        assert (link.pan, link.tilt) == pytest.approx(aimer.goal)
 
 
 def test_follows_moving_target(rig):
@@ -329,7 +398,8 @@ def dot_err(aimer, name="lime", cam=cam_px):
 def cl_rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    return Aimer(link, linear_calib(), st, clock=clock, closed_loop=True, limits=LIMITS), link, st, clock
+    return (Aimer(link, linear_calib(), st, clock=clock, closed_loop=True, limits=LIMITS, aim_y=0.5,
+                  frame_size=lambda: None), link, st, clock)
 
 
 def test_closed_loop_off_by_default(rig):
@@ -406,17 +476,20 @@ def test_closed_loop_without_dot_falls_back_to_open_loop(cl_rig):
     assert (link.pan, link.tilt) == pytest.approx(aimer.calib.angles_for(st.det("lime").center), abs=0.5)
 
 
-def test_closed_loop_trim_resets_on_new_target_and_laser_off(cl_rig):
+def test_closed_loop_trim_carries_to_the_next_target(cl_rig):
     aimer, link, st, clock = cl_rig
     aimer.point_at("lime")
     cl_ticks(aimer, clock, 60)
     trim = aimer.trim
-    assert aimer.on_target and trim != (0.0, 0.0)
+    assert aimer.on_target and trim != (0.0, 0.0) and aimer.carry == trim
     aimer.point_at("lime")                      # asked again: same object, keep what we learned
     assert aimer.trim == trim
-    aimer.point_at("avocado")
-    assert aimer.trim == (0.0, 0.0)
+    aimer.point_at("avocado")                   # a new target starts from what the last confirmed one needed
+    assert aimer.trim == trim
     cl_ticks(aimer, clock, 60)
     assert aimer.on_target and dot_err(aimer, "avocado") <= Aimer.CLOSE_PX
     aimer.laser_off()
-    assert aimer.trim == (0.0, 0.0) and not aimer.on_target
+    assert aimer.trim == aimer.carry and not aimer.on_target
+    aimer.CL_CARRY = False                      # off: every target starts from the calibration alone
+    aimer.point_at("bowl")
+    assert aimer.trim == (0.0, 0.0)
