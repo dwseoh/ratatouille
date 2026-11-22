@@ -17,7 +17,11 @@ hadn't said anything yet, its text is merged into the next turn instead of being
 
 Echo gate (echo.py, ECHO_GATE=1 by default): while the coach is audible, the mic hears it, so only a stop
 word starts a user turn (and cuts the audio); everything else heard then is dropped. With headphones,
-ECHO_GATE=0 brings back barge-in by any speech.
+ECHO_GATE=0 brings back barge-in by any speech. "Pause" / "hold on a minute" said over the coach cuts it like a stop
+word and then pauses the session.
+
+Paused session (session.py): speech is ignored except a resume phrase or "hey Remy" (resumes, then one welcome-back
+turn), "start over", and safety ("help", "I cut myself": answered while staying paused).
 
 Devices: MIC_NAME / SPEAKER_NAME (.env) pick the mic and speaker by name substring, never "default"
 (macOS switches the default whenever something connects). `python -m tools.try_voice --devices` lists them.
@@ -70,7 +74,7 @@ from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from .echo import EchoGate, EchoGateStartStrategy
-from .intents import IntentActions
+from .intents import IntentActions, allowed_while_paused, ends_with_pause
 from .contracts import (
     LAT_FIRST_AUDIO,
     LAT_POINT,
@@ -87,8 +91,8 @@ CHIME_RATE = 24000      # = PipelineParams.audio_out_sample_rate
 
 
 def _chime_frame(kind: str) -> OutputAudioRawFrame:
-    """Two soft notes, ~0.25 s. Rising = session starting, falling = reset."""
-    notes = (660.0, 990.0) if kind == "start" else (660.0, 440.0)
+    """Two soft notes, ~0.25 s. Rising = session starting / resuming, a small step down = paused, falling = reset."""
+    notes = {"start": (660.0, 990.0), "pause": (660.0, 550.0)}.get(kind, (660.0, 440.0))
     parts = []
     for f in notes:
         t = np.arange(int(CHIME_RATE * 0.12)) / CHIME_RATE
@@ -114,6 +118,7 @@ class AgentProcessor(FrameProcessor):
         self.agent, self.frames, self.state = agent, frames, state
         self.gate = gate or EchoGate(enabled=False)   # shared with EchoGateStartStrategy
         self._stop_turn = False            # this user turn began over the coach: it's a stop word
+        self._stop_text: list[str] = []    # what the mic heard during that turn (coach echo + the stop word / "pause")
         self.actions = actions             # intent router reflexes (point, stop, done, start over)
         self.session = None                # Session attaches itself: wake phrase while idle
         self.captions = None               # CaptionTimeline (dashboard): one caption at a time, in step with the voice
@@ -137,6 +142,8 @@ class AgentProcessor(FrameProcessor):
         if isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame)) and (
                 self.gate.suppressing or self._stop_turn):
             logger.debug(f"echo gate: dropped {frame.text!r}")   # the coach's own voice (or a stop word)
+            if self._stop_turn and isinstance(frame, TranscriptionFrame):
+                self._stop_text.append(frame.text)              # kept only to spot "pause" at the end of it
             return
         if isinstance(frame, InterimTranscriptionFrame):
             st.transcript = " ".join(self._text + [frame.text])
@@ -162,6 +169,7 @@ class AgentProcessor(FrameProcessor):
             self._speech_end = time.monotonic() - frame.stop_secs   # when the user actually went quiet
         elif isinstance(frame, UserStartedSpeakingFrame):
             self._stop_turn = self.gate.suppressing      # only a stop word starts a turn over the coach
+            self._stop_text.clear()
             st.user_talking, st.last_activity = True, time.monotonic()
             await self._cancel_turn("stop word" if self._stop_turn else "barge-in")   # audio already cut
             self._woke = False
@@ -190,14 +198,25 @@ class AgentProcessor(FrameProcessor):
         self._text.clear()
         if self._stop_turn:                    # audio cut + agent cancelled at turn start; nothing to answer
             self._stop_turn = False
+            heard, self._stop_text = " ".join(self._stop_text), []
+            if (self.state.session == "active" and self.session is not None and hasattr(self.session, "pause")
+                    and ends_with_pause(heard)):
+                logger.info(f"pause over the coach ({heard!r}): pausing")
+                await self.session.pause("pause over the coach")
+                return
             logger.info("stop word over the coach: stopped, no agent turn")
             return
         if not text:
             return
-        if self.state.session != "active":     # idle: only the wake phrase counts
-            if not (self.session and not self._woke and await self.session.heard(text)):
+        if self.state.session != "active":     # idle: only the wake phrase counts; paused: see the module docstring
+            if self.session and not self._woke and await self.session.heard(text):
+                self._woke = True              # woke up (idle) or resumed (paused)
+            elif self.state.session == "paused" and allowed_while_paused(text):
+                pass                           # safety question / "start over": handled below, still paused
+            else:
+                if self.state.session == "paused":
+                    logger.info(f"paused: ignored {text!r}")
                 return
-            self._woke = True
         user_text = text
         if self._woke:                         # "hey Remy, ..." -> one greeting turn (+ whatever else was said)
             self._woke, self._carry, self._carry_user = False, "", ""
@@ -216,7 +235,7 @@ class AgentProcessor(FrameProcessor):
             point_t = self.actions.take_point_time()
             if point_t is not None:     # usually before speech_end: the laser moved while you talked
                 self._lat.marks[LAT_POINT] = point_t
-            if skip_agent or self.state.session != "active":   # STOP / START_OVER
+            if skip_agent or self.state.session == "idle":   # STOP / START_OVER / PAUSE
                 logger.info(f"user turn {self._lat.turn_id}: {text!r} handled locally, no agent turn")
                 return
         logger.info(f"user turn {self._lat.turn_id}: {text!r} "

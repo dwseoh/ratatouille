@@ -67,7 +67,7 @@ CASES = [
     ("hold on", S, None),
     ("ok stop", S, None),
     ("shh", S, None),
-    ("pause", S, None),
+    ("pause", Intent.PAUSE, None),                       # pauses the session now (cuts the audio too)
     ("one sec", S, None),
     ("wait wait", S, None),
     ("stop talking", S, None),

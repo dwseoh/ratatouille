@@ -1,5 +1,6 @@
 """Voice tests: AgentProcessor + Speech driven with synthetic turn/STT frames (no mic, no network)."""
 import asyncio
+import time
 from pathlib import Path
 
 from pipecat.frames.frames import (
@@ -349,3 +350,58 @@ def test_stop_drops_queued_proactive():
 
     asyncio.run(go())
     assert proc.said == ["<cut>"]
+
+
+# -- pause / resume ------------------------------------------------------------------------------------
+
+def paused_setup(gate=None):
+    from coach.echo import EchoGate
+    from coach.intents import IntentActions, IntentRouter
+    state = State(RECIPE, session="active")
+    agent = SpyAgent()
+    proc = AgentProcessor(agent, FakeFrames(), state, gate=gate or EchoGate(enabled=False))
+    speech = Speech(proc, state)
+    session = Session(state, speech, agent, FakeAimer(state), FakeSteps(state))
+    proc.actions = IntentActions(IntentRouter(RECIPE, use_embeddings=False), state, session.aimer, session.steps, session)
+    proc.actions.speech = speech
+    state.session = "active"
+    return proc, agent, state, session
+
+
+def test_saying_pause_pauses_without_an_agent_turn_and_says_how_to_come_back():
+    from coach.session import PAUSE_LINE
+    proc, agent, state, _ = paused_setup()
+    down = run(proc, user_says("pause") + [SleepFrame(sleep=0.3)])
+    assert state.session == "paused" and agent.texts == []
+    assert spoken(down) == [PAUSE_LINE]
+
+
+def test_paused_ignores_speech_until_a_resume_phrase_then_welcomes_back():
+    proc, agent, state, session = paused_setup()
+    state.session, state.paused_at = "paused", time.monotonic()
+    run(proc, user_says("how chunky should it be") + [SleepFrame(sleep=0.2)]
+        + user_says("ok I'm back, where was I") + [SleepFrame(sleep=0.5)])
+    assert state.session == "active" and len(agent.texts) == 1
+    assert agent.texts[0].startswith("[session resumed after") and agent.texts[0].endswith("User: ok I'm back, where was I")
+    assert state.transcript == "ok I'm back, where was I"
+
+
+def test_a_safety_question_is_answered_while_staying_paused():
+    proc, agent, state, _ = paused_setup()
+    state.session, state.paused_at = "paused", time.monotonic()
+    run(proc, user_says("help I cut my finger") + [SleepFrame(sleep=0.5)])
+    assert agent.texts == ["help I cut my finger"] and state.session == "paused"
+
+
+def test_pause_said_over_the_coach_cuts_it_and_pauses():
+    from coach.echo import EchoGate
+    agent = SpyAgent(delay=1.0)
+    proc, _, state, session = paused_setup(gate=EchoGate(0.3))
+    proc.agent = session.agent = agent
+    run(proc, user_says("how do I cut it") + [SleepFrame(sleep=0.1), BotStartedSpeakingFrame(),
+                                              VADUserStartedSpeakingFrame(), UserStartedSpeakingFrame(),
+                                              InterimTranscriptionFrame("in half pause", "user", ""),
+                                              final("cut it in half pause"),
+                                              VADUserStoppedSpeakingFrame(stop_secs=0.2), UserStoppedSpeakingFrame(),
+                                              SleepFrame(sleep=0.3)])
+    assert agent.texts == ["how do I cut it"] and state.session == "paused"

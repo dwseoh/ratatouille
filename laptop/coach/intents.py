@@ -15,10 +15,16 @@ For POINT the object always comes from step 1 or 2. No object named -> never POI
   STOP       -> speech.stop()                            (interim)
   DONE       -> steps.propose_done("user")               (final transcript only)
   START_OVER -> session.reset()                          (final transcript only)
+  PAUSE      -> cut the audio (interim), session.pause() (final): "pause", "give me a sec", "hold on a minute"
+  RESUME     -> session.resume() if paused               (final; usually Session.heard() already resumed)
   REPEAT, OTHER -> nothing, the agent answers.
 DONE and START_OVER wait for the final transcript because acting on half a sentence
 ("I'm done with the... how fine should the onion be?") is worse than 300 ms of delay there.
-STOP and START_OVER utterances are not sent to the agent.
+STOP, START_OVER and PAUSE utterances are not sent to the agent.
+
+"Go back to step 2" / "previous step" / "skip this one" are never DONE: the agent's go_to_step tool handles them.
+While the session is paused the router only acts on START_OVER and RESUME (no pointing, no step changes); safety
+questions ("I cut myself") still reach the agent, see `allowed_while_paused`.
 """
 from __future__ import annotations
 
@@ -42,7 +48,8 @@ STOP_MAX_WORDS = 3      # "stop", "ok stop", "wait wait": yes. "wait, where's th
 
 STOP_WORDS = {"stop", "wait", "hold on", "shh", "shush", "quiet", "pause", "one sec", "one second"}
 STOP_FILLER = {"a", "just", "please", "second", "sec", "minute", "moment", "up"}   # not counted: "hold on a second"
-STOP_NEGATED = ("don't stop", "dont stop", "do not stop", "never stop", "can't wait", "cant wait")
+STOP_NEGATED = ("don't stop", "dont stop", "do not stop", "never stop", "can't wait", "cant wait",
+                "don't pause", "dont pause", "do not pause")
 START_OVER_PHRASES = ("start over", "restart", "start again", "begin again", "from the top",
                       "reset", "from scratch")
 REPEAT_PHRASES = ("say that again", "repeat that", "repeat", "what did you say", "come again",
@@ -52,6 +59,24 @@ DONE_PHRASES = ("i'm done", "im done", "i am done", "i'm finished", "im finished
                 "next step", "ok what now", "okay what now", "what now", "done with that",
                 "did that", "i've done", "ive done", "ready for the next")
 QUESTION_STARTS = {"is", "are", "does", "do", "should", "how", "why", "can", "could", "will", "was"}
+# PAUSE: the cook steps away. Checked before STOP ("pause" and "hold on a minute" are stop words too, for the echo
+# gate). "Hold on a second" / "one sec" stay STOP: a moment's interruption, not a break.
+PAUSE_PHRASES = ("pause", "give me a sec", "give me a second", "give me a minute", "give me a moment",
+                 "give me a few minutes", "give me five", "hold on a minute", "hang on a minute", "take a break",
+                 "need a break", "need a minute", "be right back", "brb", "back in a minute", "back in a sec",
+                 "back in a second", "back in five", "take five", "pause for a bit")
+PAUSE_NEGATED = ("don't pause", "dont pause", "do not pause", "no need to pause", "unpause")
+PAUSE_MAX_WORDS = 12    # "ok give me a sec I need to wash my hands": yes. A long story that says "break": no.
+RESUME_PHRASES = ("resume", "unpause", "i'm back", "im back", "i am back", "back again", "let's continue",
+                  "lets continue", "continue", "carry on", "let's keep going", "lets keep going", "keep going",
+                  "let's get back to it", "where were we", "ready to continue")
+# Navigation is the agent's job (go_to_step). Never let it look like DONE ("previous step" ~ "next step").
+NAV_PHRASES = ("go back", "previous step", "previous one", "the step before", "back to step", "go to step",
+               "jump to", "skip this", "skip to", "skip ahead", "skip step", "skip the")
+# While paused, these still get an answer: the cook may be hurt or something may be burning.
+SAFETY_PHRASES = ("help", "emergency", "fire", "smoke", "burning", "cut myself", "cut my", "bleeding", "blood",
+                  "burned myself", "burnt myself", "burned my", "burnt my", "i burned", "i burnt", "hurt myself",
+                  "i'm hurt", "im hurt", "ouch", "ow", "first aid", "call 911", "ambulance")
 POINT_CUES = ("where", "which", "show me", "point", "find", "grab", "get the", "can't see", "cant see")
 
 # Paraphrase examples for the embedding fallback. Grow these from real test sessions.
@@ -105,6 +130,38 @@ def is_stop(text: str) -> bool:
     return any(_has(t, w) for w in STOP_WORDS)
 
 
+def is_pause(text: str) -> bool:
+    """The cook wants a break: a pause phrase, not negated, not about a timer, in a short-ish utterance."""
+    t = normalize(text)
+    for n in PAUSE_NEGATED:
+        t = f" {t} ".replace(f" {n} ", " ").strip()
+    words = t.split()
+    if not words or len(words) > PAUSE_MAX_WORDS or "timer" in t:
+        return False
+    return any(_has(t, p) for p in PAUSE_PHRASES)
+
+
+def ends_with_pause(text: str, tail: int = 6) -> bool:
+    """A pause phrase in the last `tail` words. For the echo gate: what the mic heard over the coach ends with it."""
+    return is_pause(" ".join(normalize(text).split()[-tail:]))
+
+
+def is_resume(text: str) -> bool:
+    t = normalize(text)
+    return any(_has(t, p) for p in RESUME_PHRASES)
+
+
+def is_safety(text: str) -> bool:
+    t = normalize(text)
+    return any(_has(t, p) for p in SAFETY_PHRASES)
+
+
+def allowed_while_paused(text: str) -> bool:
+    """Speech that still gets through while paused, besides resume phrases: safety, and "start over"."""
+    t = normalize(text)
+    return is_safety(t) or any(_has(t, p) for p in START_OVER_PHRASES)
+
+
 def is_short_stop(text: str) -> bool:
     """STOP as the router means it: a stop word in an utterance of at most STOP_MAX_WORDS real words."""
     return len(_stop_words(text)) <= STOP_MAX_WORDS and is_stop(text)
@@ -153,12 +210,19 @@ class IntentRouter:
             return IntentResult(Intent.OTHER, score=0.0)
         words = t.split()
 
-        if is_short_stop(t):
+        timer = _has(t, "timer") or _has(t, "timers")   # "stop the timer", "pause the timer": the agent's job
+        if not timer and is_pause(t):
+            return IntentResult(Intent.PAUSE)
+        if not timer and is_short_stop(t):
             return IntentResult(Intent.STOP)
         if any(_has(t, p) for p in START_OVER_PHRASES):
             return IntentResult(Intent.START_OVER)
         if any(_has(t, p) for p in REPEAT_PHRASES):
             return IntentResult(Intent.REPEAT)
+        if any(_has(t, p) for p in NAV_PHRASES):
+            return IntentResult(Intent.OTHER, score=0.0)       # the agent's go_to_step does navigation
+        if is_resume(t):                                       # before DONE: "I'm back, what's next?" mustn't skip a step
+            return IntentResult(Intent.RESUME)
         # "is it finished?" is a question about the food, not "I'm done".
         if words[0] not in QUESTION_STARTS and any(_has(t, p) for p in DONE_PHRASES):
             return IntentResult(Intent.DONE)
@@ -226,14 +290,18 @@ class IntentActions:
 
     async def on_interim(self, text: str) -> None:
         r = self.router.classify(text)
+        if r.intent is Intent.PAUSE:
+            r = IntentResult(Intent.STOP)       # cut the audio now; the pause itself waits for the final transcript
         if r.intent in (Intent.POINT, Intent.STOP):
             await self._act(r, text)
 
     async def on_final(self, text: str) -> bool:
         """Act on the finished utterance. Returns True if the agent should NOT get this turn."""
         r = self.router.classify(text)
+        if self.state.session == "paused" and r.intent not in (Intent.START_OVER, Intent.RESUME):
+            return False        # paused: no pointing or step changes (a safety question still reaches the agent)
         await self._act(r, text)
-        return r.intent in (Intent.STOP, Intent.START_OVER)
+        return r.intent in (Intent.STOP, Intent.START_OVER, Intent.PAUSE)
 
     async def _act(self, r: IntentResult, text: str) -> None:
         key = (r.intent, r.obj)
@@ -264,6 +332,16 @@ class IntentActions:
                 await self.session.reset()
             else:
                 logger.warning("START_OVER heard but no SessionAPI wired yet")
+        elif r.intent is Intent.PAUSE:
+            if self.session is not None and hasattr(self.session, "pause"):
+                await self.session.pause(f"heard {text!r}")
+            else:                                # no session: at least go quiet
+                self.aimer.laser_off()
+                if self.speech:
+                    self.speech.stop()
+        elif r.intent is Intent.RESUME:
+            if self.state.session == "paused" and self.session is not None and hasattr(self.session, "resume"):
+                await self.session.resume(f"heard {text!r}")
 
     def take_point_time(self) -> float | None:
         t, self.point_t = self.point_t, None
