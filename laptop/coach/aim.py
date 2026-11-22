@@ -358,13 +358,15 @@ class Aimer:
     LOST_OFF_S = 3.0        # target unseen this long -> laser off
 
     # Closed loop (stretch, only with closed_loop=True; needs a DotTracker writing State.dot)
-    CLOSE_PX = 10.0         # dot within this many px of the target centre = on target
+    CLOSE_PX = 10.0         # dot within this many px of the target = on target (at 640 wide; scaled to the frame)
     CL_GAIN = 0.7           # fraction of the pixel error corrected per nudge
     CL_MAX_NUDGE_DEG = 3.0  # per nudge, per axis
     CL_MAX_TRIM_DEG = 10.0  # total correction on top of the calibration, per axis (a bad dot can't drag it far)
     CL_WAIT_S = 0.35        # servos still this long before the dot is trusted (servo settle + camera lag)
     CL_DOT_TIMEOUT_S = 1.2  # no dot this long after the move -> fall back to the open-loop on_target
     SIGN_GROW_PX = 3.0      # an axis error grew by more than this after a nudge -> flip that axis (once per target)
+    CL_CARRY = True         # a new target starts from the last confirmed trim: a posture change (counter nearer or
+                            # further than at calibration) shifts every target about the same way
 
     def __init__(self, link: ControlLinkAPI, calib: Calibration | None, state: State,
                  hz: float = 30.0, clock: Callable[[], float] = time.monotonic, closed_loop: bool = False,
@@ -393,6 +395,7 @@ class Aimer:
         self._final: tuple[float, float] | None = None  # goal being driven to (after hold/deadband)
         self._via: tuple[float, float] | None = None    # approach point below the goal, visited first
         self._arrived_at: float | None = None
+        self.carry = (0.0, 0.0)  # closed loop: trim of the last target the dot confirmed (session knowledge)
         self._reset_closed_loop()
         self._moved_at = 0.0    # last time the servos were commanded to move (or nudged)
         self._turn = None       # the TurnLatency that was current at point_at (gets LAT_ON_TARGET)
@@ -498,7 +501,7 @@ class Aimer:
             log.info("aimer: %s back in reach, laser on", self.target)
             self.reachable = True
             self.link.laser = True
-        (gp, gt), self.aim_px = aim
+        (gp, gt), self.aim_px, look_px = aim
         if self.closed_loop:
             gp, gt = gp + self.trim[0], gt + self.trim[1]
         gp = min(max(gp, self.PAN_MIN), self.PAN_MAX)
@@ -506,7 +509,7 @@ class Aimer:
         self.goal = (gp, gt)
         reached = self._drive((gp, gt), now)
         if self.closed_loop and reached:
-            reached = self._correct(now, self.aim_px)
+            reached = self._correct(now, look_px)
         self.on_target = self.state.on_target = reached
 
     # ── target tracking ─────────────────────────────────────────────────────
@@ -536,11 +539,13 @@ class Aimer:
                 self._boxes.clear()         # moved or a different instance: don't average across it
         self._boxes.append(box)
 
-    def _aim(self, box) -> tuple[tuple[float, float], tuple[float, float]] | None:
-        """(goal angles, aim pixel) for a box, or None if no part of it is within reach.
+    def _aim(self, box):
+        """(goal angles, aim pixel, look pixel) for a box, or None if no part of it is within reach.
 
         Aims at the box's horizontal centre, aim_y of the way down. If that's outside the servo limits, the
         reachable point of the box nearest to it (an object half in reach gets the dot on its reachable half).
+        The look pixel is where the dot should be SEEN (closed loop): the box centre, because aim_y > 0.5 only
+        makes up for the open-loop parallax (the ray through the centre meets the counter behind the fruit).
         """
         x1, y1, x2, y2 = (float(v) for v in box)
         w, h = x2 - x1, y2 - y1
@@ -558,7 +563,9 @@ class Aimer:
         if not ok.any():
             return None
         i = int(np.argmax(ok))
-        return (float(ang[i, 0]), float(ang[i, 1])), (float(cands[i, 0]), float(cands[i, 1]))
+        aim_px = (float(cands[i, 0]), float(cands[i, 1]))
+        look_px = (float(aim[0]), y1 + 0.5 * h) if i == 0 else aim_px
+        return (float(ang[i, 0]), float(ang[i, 1])), aim_px, look_px
 
     # ── servo drive ─────────────────────────────────────────────────────────
     def _drive(self, goal: tuple[float, float], now: float) -> bool:
@@ -623,7 +630,8 @@ class Aimer:
 
     # ── closed loop (stretch) ─────────────────────────────────────────────────
     def _reset_closed_loop(self) -> None:
-        self.trim = (0.0, 0.0)  # correction added to the calibration's goal (pan, tilt), degrees, learned per target
+        # correction added to the calibration's goal (pan, tilt), degrees, learned per target (starts from carry)
+        self.trim = self.carry if self.CL_CARRY else (0.0, 0.0)
         self._sign, self._flipped = [1.0, 1.0], [False, False]
         self._last_err = None   # (target px, pixel error) at the last nudge, for the sign check
         self._verdict = None    # dot-measured on_target since the last move; None = not measured yet
@@ -640,11 +648,12 @@ class Aimer:
         if dot is None:
             return now - self._moved_at >= self.CL_DOT_TIMEOUT_S if self._verdict is None else self._verdict
         err = (target[0] - dot[0], target[1] - dot[1])
-        if np.hypot(*err) <= self.CLOSE_PX:
+        if np.hypot(*err) <= self._close_px():
             if self._turn is not None:
                 self._turn.mark(LAT_ON_TARGET)       # once per point_at
                 self._turn = None
             self._verdict, self._last_err = True, None
+            self.carry = self.trim
             return True
         self._check_sign(target, err)
         # The calibration says how far the dot is from where we want it, in degrees: angles(aim) - angles(dot).
@@ -658,6 +667,12 @@ class Aimer:
         log.debug("aimer: dot %s target %s err %s -> trim %s", dot, target, err, self.trim)
         return False
 
+    def _close_px(self) -> float:
+        """CLOSE_PX for this camera: it's meant for 640-wide frames (~1 deg); at 320x240 that's 5 px."""
+        if self._fsize:
+            return max(4.0, self.CLOSE_PX * self._fsize[0] / 640.0)
+        return self.CLOSE_PX
+
     def _check_sign(self, target, err) -> None:
         """If an axis error grew after the last nudge (and the target didn't move), that axis is mirrored: flip it."""
         if self._last_err is None:
@@ -666,7 +681,7 @@ class Aimer:
         if np.hypot(target[0] - last_target[0], target[1] - last_target[1]) > self.SIGN_GROW_PX:
             return
         for k in (0, 1):
-            grew = abs(last[k]) > self.CLOSE_PX / 2 and abs(err[k]) > abs(last[k]) + self.SIGN_GROW_PX
+            grew = abs(last[k]) > self._close_px() / 2 and abs(err[k]) > abs(last[k]) + self.SIGN_GROW_PX
             if grew and not self._flipped[k]:
                 self._sign[k], self._flipped[k] = -self._sign[k], True
                 log.warning("aimer: closed-loop error grew on axis %s, flipping its sign", "xy"[k])

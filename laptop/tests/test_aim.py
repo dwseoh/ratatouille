@@ -108,7 +108,8 @@ def test_limits_default_to_config_full_range():
 def rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    aimer = Aimer(link, linear_calib(), st, clock=clock, limits=LIMITS, aim_y=0.5)   # aim at the box centre
+    aimer = Aimer(link, linear_calib(), st, clock=clock, limits=LIMITS, aim_y=0.5,   # aim at the box centre
+                  frame_size=lambda: None)
     return aimer, link, st, clock
 
 
@@ -397,7 +398,8 @@ def dot_err(aimer, name="lime", cam=cam_px):
 def cl_rig():
     link, clock = SpyLink(), Clock()
     st = State(RECIPE, dets=fake_dets())
-    return Aimer(link, linear_calib(), st, clock=clock, closed_loop=True, limits=LIMITS, aim_y=0.5), link, st, clock
+    return (Aimer(link, linear_calib(), st, clock=clock, closed_loop=True, limits=LIMITS, aim_y=0.5,
+                  frame_size=lambda: None), link, st, clock)
 
 
 def test_closed_loop_off_by_default(rig):
@@ -474,17 +476,20 @@ def test_closed_loop_without_dot_falls_back_to_open_loop(cl_rig):
     assert (link.pan, link.tilt) == pytest.approx(aimer.calib.angles_for(st.det("lime").center), abs=0.5)
 
 
-def test_closed_loop_trim_resets_on_new_target_and_laser_off(cl_rig):
+def test_closed_loop_trim_carries_to_the_next_target(cl_rig):
     aimer, link, st, clock = cl_rig
     aimer.point_at("lime")
     cl_ticks(aimer, clock, 60)
     trim = aimer.trim
-    assert aimer.on_target and trim != (0.0, 0.0)
+    assert aimer.on_target and trim != (0.0, 0.0) and aimer.carry == trim
     aimer.point_at("lime")                      # asked again: same object, keep what we learned
     assert aimer.trim == trim
-    aimer.point_at("avocado")
-    assert aimer.trim == (0.0, 0.0)
+    aimer.point_at("avocado")                   # a new target starts from what the last confirmed one needed
+    assert aimer.trim == trim
     cl_ticks(aimer, clock, 60)
     assert aimer.on_target and dot_err(aimer, "avocado") <= Aimer.CLOSE_PX
     aimer.laser_off()
-    assert aimer.trim == (0.0, 0.0) and not aimer.on_target
+    assert aimer.trim == aimer.carry and not aimer.on_target
+    aimer.CL_CARRY = False                      # off: every target starts from the calibration alone
+    aimer.point_at("bowl")
+    assert aimer.trim == (0.0, 0.0)

@@ -385,10 +385,41 @@ def test_click_calibration_window_grid_verify_and_add(tmp_path, monkeypatch):
     monkeypatch.setattr(cv2, "waitKey", wait_key)
     monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
     out = tmp_path / "calibration.json"
-    calibrate.main(["-n", "3", "--settle-ms", "0", "--out", str(out), "--pan-min", "60", "--pan-max", "120",
-                    "--tilt-min", "30", "--tilt-max", "70"])
+    calibrate.main(["-n", "3", "--settle-ms", "0", "--out", str(out), "--pan-min", "40", "--pan-max", "100",
+                    "--tilt-min", "32", "--tilt-max", "70"])           # every dot inside the 640x480 picture
     d = json.loads(out.read_text())
     assert d["frame"] == [640, 480] and len(d["points"]["px"]) == 9 + calibrate.VERIFY_N
     assert not link.laser
     back = Calibration.load(out)
-    assert back.angles_for(cam(90, 50)) == pytest.approx((90, 50), abs=0.05)   # snapped clicks: exact
+    assert back.angles_for(cam(70, 50)) == pytest.approx((70, 50), abs=0.05)   # snapped clicks: exact
+
+
+def test_closed_loop_carry_cancels_most_of_a_posture_change():
+    """Calibrated with the counter 35 cm away, used at 42 cm (wearer stepped back): the first target is found with
+    the dot, and the trim it needed brings the next target most of the way before any dot is seen."""
+    cal_rig = quiet(Rig())
+    px, ang = cal_rig.calibrate(GRID, np.random.default_rng(0), click_px=0.0, via_deg=3.0, lo=LO, hi=HI)
+    calib = Calibration().fit(px, ang, model="plane", frame=cal_rig.frame)
+    use = quiet(Rig(h=0.42))
+    pts = use.targets(PAN, TILT, n=40, rng=np.random.default_rng(9))
+    pix = use.project(pts)
+    inner = [p for p in pix if 60 < p[0] < 260 and 20 < p[1] < 90]
+    a, b = inner[0], inner[-1]
+    box = lambda p: (p[0] - 6, p[1] - 6, p[0] + 6, p[1] + 6)
+    st = State(RECIPE, dets=[Det("lime", 0.9, box(a)), Det("avocado", 0.9, box(b))])
+    aimer = Aimer(SpyLink(), calib, st, closed_loop=True, limits=LIMITS, aim_y=0.5, frame_size=lambda: (320, 240))
+    t = [0.0]
+    aimer.clock = lambda: t[0]
+    aimer.point_at("lime")
+    for _ in range(300):
+        t[0] += 1 / 30
+        st.dot = tuple(use.dot_px((aimer.link.pan, aimer.link.tilt), move=False))
+        aimer.tick()
+        if aimer.on_target:
+            break
+    assert aimer.on_target and aimer.carry != (0.0, 0.0)
+
+    def miss(trim):
+        g = np.add(calib.angles_for(b), trim)
+        return float(np.hypot(*(use.dot_px(g, move=False) - b)))
+    assert miss(aimer.carry) < 0.4 * miss((0.0, 0.0)) and miss((0.0, 0.0)) > 5
