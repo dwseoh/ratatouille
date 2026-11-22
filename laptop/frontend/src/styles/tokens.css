@@ -1,0 +1,28 @@
+/* Design tokens from Figma file "Ratatouille" (ejdNnvtG1sBfD9MiRx6eI1).
+   Names match the Figma variable names. Source of truth is Figma. */
+
+:root {
+  /* colors */
+  --dark-brown: #796c6c;
+  --light-brown: #a99d9d;
+  --beige: #e5dbd2;
+  --white: #fdfbfa;
+  --green: #9adb79;
+  --red: #e88c8c;
+
+  /* spacing: used for padding AND gap (px) */
+  --padding-40: 40px;
+  --padding-20: 20px;
+  --padding-10: 10px;
+  --padding-5: 5px;
+
+  /* border width (Figma: number-2) */
+  --number-2: 2px;
+
+  /* type styles */
+  --font-heading: "Protest Riot", sans-serif; /* Heading 2: 24 / 100% */
+  --font-body: "Nunito", sans-serif; /* Text: 16 regular, Bold Text: 18 bold */
+  --text-heading-2: 24px;
+  --text-body: 16px;
+  --text-body-bold: 18px;
+}

@@ -66,7 +66,8 @@ Rules that make it fast:
 | S3 firmware | `firmware/control_s3/control_s3.ino` | on the S3 | A |
 
 The laptop is both the "backend" and the "frontend". The dashboard page is served by the same Python
-process, so it can read `State` directly. Nothing else to deploy.
+process, so it can read `State` directly. The pages are built from `laptop/frontend` into `laptop/coach/static/`
+(committed), so there is nothing else to install or deploy.
 
 ## 3. One turn: "where's the lime?"
 
@@ -189,6 +190,7 @@ ratatouille/
 │   └── servo_test/            A   bench test sketch
 ├── hardware/enclosure/        A   OpenSCAD: box, lid, laser holder
 ├── laptop/
+│   ├── frontend/              C   source of the dashboard + phone pages (React/Vite); `npm run build` writes coach/static/
 │   ├── recipes/guacamole.json C   recipe (facts, aliases)
 │   ├── requirements.txt       all (append only, say so when adding something heavy)
 │   └── coach/
@@ -205,7 +207,8 @@ ratatouille/
 │       ├── agent.py           C
 │       ├── steps.py           C   (new)
 │       ├── checkin.py         C   (new)
-│       └── dashboard.py       C
+│       ├── dashboard.py       C   serves the pages and /state, /stream
+│       └── static/            C   built pages from laptop/frontend (committed)
 └── tools/fake_s3.py           A   pretend S3 on UDP 4210 (new)
 ```
 

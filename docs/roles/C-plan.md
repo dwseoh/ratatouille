@@ -30,6 +30,9 @@ Needs: nothing (FakeSpeech/FakeFrames).
 
 ## Phase 2: dashboard, `dashboard.py` (S2, M)
 
+> Note: items 4 and 5 below describe the first version of the page. It was later replaced by the Figma-designed pages in
+> `laptop/frontend` (built into `laptop/coach/static/`, served by `dashboard.py`); see `laptop/frontend/README.md`.
+
 Build against a fake `State` first (`fake_dets()`, made-up turns), so it needs nobody.
 1. FastAPI app, uvicorn in the same loop (`asyncio.create_task(server.serve())`), `host="0.0.0.0"`, port from config.
 2. `GET /state`: the JSON shape in C.md section 5 (`state.turns[-1].ms()`, last ~20 events, links).

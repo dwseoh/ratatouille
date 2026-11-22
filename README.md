@@ -31,7 +31,8 @@ firmware/
   camera/        Freenove WROVER CAM: stock CameraWebServer + notes
   control_s3/    ESP32-S3: UDP commands -> servos, laser, TFT display
 laptop/
-  coach/         Python hub (asyncio)
+  coach/         Python hub (asyncio); coach/static/ = the built web pages
+  frontend/      source of the dashboard and phone pages (React + Vite); see its README
   recipes/       recipe JSON (steps, objects to detect)
 ```
 

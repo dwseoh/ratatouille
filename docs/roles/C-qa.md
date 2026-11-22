@@ -107,28 +107,31 @@ The automated test `test_full_seven_step_run_with_pushback_and_a_vision_ask` cov
 cd laptop && ../.venv/bin/python -m tools.try_dashboard
 ```
 
-Open http://localhost:8000. Fake data changes every few seconds. Check each panel:
-live video with boxes (the target box is green, the red circle is the laser dot), step n/7, the big yellow caption
-(last coach sentence), "You said", the speaking dot, event log (newest on top), 4 latency bars, camera / S3 /
-battery pills, "live" in the header.
+Open http://localhost:8000. Fake data changes every few seconds. Check each part of the page: the step card (step
+number and name, the goal, the **How to do this step** list), Remy's image with the last thing Remy said (the image
+animates while Remy is talking), the QR code with its web address under it next to the step picture, the status bubbles
+(waiting for "Hey Remy" / camera / S3 / connected), your last words under your image (it animates while you talk), the
+live camera with boxes (the target box is green, the red circle is the laser dot), and, with **Show developer info** on,
+the laser target, what Remy sees, battery, the 4 latency bars and the event log.
 
-- **Display options (top right of the page):** **Light mode** switches dark/light; **Dyslexia font** shows *all* text in
-  OpenDyslexic. Click each: the button gets an orange border when on, and your choice is remembered in that browser
-  (reload to check). To send someone a ready-made view, add it to the address: `http://<address>:8000/?theme=light&font=dyslexic`
-  (a link choice is for that visit only). The font loads from the internet (jsdelivr); with no internet it falls back to
-  Comic Sans, another dyslexia-friendly font. For a fully offline demo, tell me and I'll bundle the font files.
+- **Menu (the icon, top right):** **Light/dark mode** switches the theme (the title and tab icon change with it);
+  **Dyslexia font** shows *all* text in OpenDyslexic; **Show developer info** hides or shows the laser / sees / battery
+  info and the latency + event-log bar. Click each toggle; your choice is remembered in that browser (reload to check).
+  To send someone a ready-made view, add it to the address: `http://<address>:8000/?theme=dark&font=dyslexic` (a link
+  choice is for that visit only). All fonts are bundled, so it works with no internet.
 - **Phone test:**
   1. Put the phone on the **same WiFi** as the laptop (not mobile data, not a guest network: those often block it).
   2. Start the dashboard (`python -m tools.try_dashboard`, or the app from section 3). The log prints
      `dashboard: http://localhost:8000 (phone on the same WiFi: http://192.168.x.x:8000)`. If you don't see it,
      run `ipconfig getifaddr en0` in another terminal for the laptop's address.
-  3. On the phone, open that `http://<address>:8000` in the browser. macOS may ask "Allow Python to accept
-     incoming network connections": click **Allow** (or the phone can't connect).
-  4. You should see the same page, in **one column** (video on top, then step, captions, log). Captions must be easy to read.
-     No video but the numbers update? The phone is connecting; wait a few seconds for the stream.
+  3. On the phone, open that address with `/cook` on the end, `http://<address>:8000/cook` (or scan the QR code on the
+     dashboard). macOS may ask "Allow Python to accept incoming network connections": click **Allow** (or the phone
+     can't connect). The main address `http://<address>:8000` is the desktop dashboard, laid out for a wide window.
+  4. You should see the phone page: one column, one step at a time, with the step picture, the how-to list and Remy's
+     last sentence. The text must be easy to read. No picture but the text updates? The phone is connecting; wait a few seconds.
   If it doesn't load: check the phone and laptop are on the same network name, try Safari/Chrome, and that
   nothing else uses port 8000.
-- **Disconnect test:** stop the script (Ctrl-C). The page header turns red "disconnected" within a second.
+- **Disconnect test:** stop the script (Ctrl-C). The last status bubble turns red and says "Disconnected" within a second.
 
 ## 4b. Step card, phone page and recipe import (10 min)
 
@@ -138,13 +141,13 @@ the step's actions as a numbered list, plus a photo if one exists. Photos are op
 `hero.jpg` for steps without their own. Take them at the first rehearsal so they match your kitchen. A step with no picture
 never shows an empty box: a picture is ALWAYS up. Order: the step's own photo, else `hero.jpg` (the finished dish), else a plain
 card with the recipe and step name. **Ask Remy for another step's picture:** say "show me the picture from the onion step";
-the dashboard and phone switch to it with a small "Showing step 4" note, and go back to following you when you move to the
+the dashboard and phone switch to it with a small "Showing step 4" note (on the picture on the dashboard), and go back to following you when you move to the
 next step (say "show the current step" to switch back sooner). The live feed draws the laser's target with a thick green box and a big `> lime` label.
 
 **Phone page.** Open `http://<laptop address>:8000/cook` on a phone (same WiFi). It shows ONE step at a time: progress bar,
-the step name, the photo, the actions in large text, tips, and what Remy last said. It follows the cooking live. It also has
-**Light mode** and **Dyslexia font** buttons. The main dashboard has a **Follow along on your phone** box with a QR code
-for this page: scan it with the phone camera.
+the step name, the photo, the actions in large text, tips, and what Remy last said. It follows the cooking live. It has the
+same menu as the dashboard (light/dark mode, dyslexia font). The dashboard shows a QR code for this page, with its web
+address under it, next to the step picture: scan it with the phone camera.
 
 **Import a recipe** (offline tool, costs a few cents):
 
@@ -195,7 +198,7 @@ On the dashboard each fallback shows as a red `system` event ("agent fallback: .
 | Spatial wording | `where's the lime?` (with `--cam 0` and a real lime in view) | "on your left / right / in the middle" matches reality |
 | Never rush | read any reply | no "quickly", "hurry" |
 | Talk less / more | `talk less`, `talk more` | acknowledges; check-in rate changes |
-| Captions | look at the dashboard while it talks | last 3 sentences in large text, newest in yellow |
+| Captions | look at the dashboard while it talks | Remy's current sentence in bold next to Remy's image, the two before it lighter above, and Remy's image animating |
 
 Start in plain mode: `PLAIN_LANGUAGE=1` in `.env`.
 
@@ -215,7 +218,7 @@ cd laptop && ../.venv/bin/python -m coach.main --no-s3 --no-yolo --cam 0
 | interrupt the coach mid-sentence | it stops talking immediately and answers what you just said |
 | stay silent 20 s | one short comment, never over you |
 | watch the **dashboard captions** while it talks | **one sentence at a time**; the next only appears when the voice has finished the previous one; if you interrupt, the unspoken ones vanish |
-| cover the camera, say "ignore the camera" | it stops mentioning the camera; the dashboard pill says "camera ignored"; no "ready for the next step?" from the watcher |
+| cover the camera, say "ignore the camera" | it stops mentioning the camera; the dashboard (developer info on) shows a red "Camera ignored" bubble; no "ready for the next step?" from the watcher |
 | "start over" | chime, back to idle |
 | halve an avocado in view of the camera | within ~5 s the event log shows "avocado halved"; later the coach asks "ready for the next step?" and you say "yes" and it advances |
 

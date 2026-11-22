@@ -1,0 +1,143 @@
+/* Phone page (/cook). Same tokens, fonts, cards and menu as the desktop dashboard; single column, bigger text. */
+.cook {
+  --header-h: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-20);
+  max-width: 560px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: var(--padding-20);
+  overflow-wrap: anywhere;
+  /* reading-size text: 20 px (18 px with the dyslexia font), 2 px bigger than the desktop "bold" style */
+  --cook-text: calc(var(--text-body) + 4px);
+}
+
+h1 {
+  margin: 0;
+}
+
+/* smaller title so the header stays short on a phone (same crop as the dashboard, scaled to 0.7) */
+.cook .title {
+  width: 191px;
+  height: var(--header-h);
+}
+
+.cook .title img {
+  top: -10.5px;
+  left: -31.5px;
+  width: 246px;
+  height: 72px;
+}
+
+.cook .menu-panel {
+  width: min(350px, calc(100vw - 2 * var(--padding-20)));
+  padding: var(--padding-20);
+}
+
+.cook__offline {
+  display: flex;
+  justify-content: center;
+}
+
+.cook__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-10);
+}
+
+.dots {
+  display: flex;
+  gap: var(--padding-5);
+}
+
+.dots span {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--beige);
+}
+
+.dots .done {
+  background: var(--green);
+}
+
+.dots .now {
+  background: var(--dark-brown);
+}
+
+.cook__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-10);
+}
+
+.cook__step .heading {
+  font-size: calc(var(--text-heading-2) + 6px);
+}
+
+.cook__step p {
+  font-size: calc(var(--text-body) + 2px);
+}
+
+.cook__photo-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-5);
+}
+
+.cook__photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--beige);
+  object-fit: cover;
+}
+
+.cook__note {
+  font-size: var(--text-body);
+  color: var(--light-brown);
+}
+
+.cook .card {
+  flex: none;
+  gap: var(--padding-10);
+  padding: var(--padding-20);
+}
+
+.cook .card ol,
+.cook .card ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-10);
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: var(--cook-text);
+  line-height: 1.35;
+}
+
+.cook .card ul {
+  font-size: calc(var(--text-body) + 1px);
+}
+
+/* Remy's current sentence stays visible while scrolling */
+.cook__say {
+  position: sticky;
+  bottom: var(--padding-10);
+  flex-direction: row !important;
+  align-items: center;
+  background: var(--white);
+}
+
+.cook__say .avatar {
+  width: 80px;
+  height: 80px;
+}
+
+/* a long sentence scrolls inside the box instead of covering the page */
+.cook__say .bold {
+  max-height: 24vh;
+  overflow-y: auto;
+  font-size: var(--text-body-bold);
+  line-height: 1.3;
+}
