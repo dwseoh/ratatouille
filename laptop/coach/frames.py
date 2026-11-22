@@ -26,6 +26,15 @@ _XF = {"90": lambda f: cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE), "180": lambda f: 
        "vflip": lambda f: cv2.flip(f, 0), "hflip": lambda f: cv2.flip(f, 1)}
 
 
+_last_size: tuple[int, int] | None = None   # (w, h) of the newest frame any FrameGrabber delivered
+
+
+def last_frame_size() -> tuple[int, int] | None:
+    """(width, height) of the newest camera frame in this process (after CAM_ROTATE), or None before the first.
+    The Aimer compares it with the size calibration.json was made at (one camera per process)."""
+    return _last_size
+
+
 def frame_transform(spec):
     """CAM_ROTATE value -> function applied to each frame, or None for "0" / unknown values."""
     return _XF.get(str(spec).strip().lower()) if spec is not None else None
@@ -36,6 +45,13 @@ def parse_source(src: int | str) -> int | str:
     if isinstance(src, str) and src.strip().isdigit():
         return int(src.strip())
     return src
+
+
+def _note_size(frame) -> None:
+    global _last_size
+    size = (int(frame.shape[1]), int(frame.shape[0]))
+    if size != _last_size:
+        _last_size = size
 
 
 class FrameGrabber:
@@ -122,6 +138,7 @@ class FrameGrabber:
                     break  # stream dropped / file ended -> reconnect
                 if self._xf is not None:
                     frame = self._xf(frame)
+                _note_size(frame)
                 now = time.time()
                 with self._lock:
                     self._frame, self._ts = frame, now
