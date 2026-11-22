@@ -1,8 +1,8 @@
 """Echo gate (B, checkpoint 4): the always-on mic hears the coach's own voice from the speaker.
 
 While the coach is speaking, and for `tail_s` after it stops (Bluetooth speakers lag ~0.2 s), the gate is
-CLOSED: user speech is ignored, except a stop word ("stop", "wait", "hold on"...) at the end of what the
-mic heard, which starts a user turn. That turn start is what cuts the coach's audio (Pipecat interruption)
+CLOSED: user speech is ignored, except a stop word ("stop", "wait", "hold on"...) or a pause phrase ("give me a
+sec": voice.py then pauses the session) at the end of what the mic heard, which starts a user turn. That turn start is what cuts the coach's audio (Pipecat interruption)
 and cancels the agent turn, as a normal barge-in would.
 
 Two parts share one `EchoGate`:
@@ -28,7 +28,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.turns.user_start.base_user_turn_start_strategy import BaseUserTurnStartStrategy
 
-from .intents import ends_with_stop
+from .intents import ends_with_pause, ends_with_stop
 
 
 class EchoGate:
@@ -90,6 +90,6 @@ class EchoGateStartStrategy(BaseUserTurnStartStrategy):
         elif isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)):
             if not self.gate.suppressing:
                 await self.report_user_turn_started()
-            elif ends_with_stop(frame.text):
+            elif ends_with_stop(frame.text) or ends_with_pause(frame.text):     # "give me a sec" pauses
                 logger.info(f"echo gate: stop word over the coach: {frame.text!r}")
                 await self.report_user_turn_started()

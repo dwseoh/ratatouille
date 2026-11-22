@@ -111,6 +111,12 @@ def test_strategy_closed_gate_only_stop_words_start_a_turn():
     assert feed(s, InterimTranscriptionFrame("in half stop", "user", "")) == 1
 
 
+def test_strategy_closed_gate_also_opens_for_a_pause_phrase():
+    s = strategy(EchoGate())
+    assert feed(s, BotStartedSpeakingFrame(), InterimTranscriptionFrame("now cut the avocado", "user", "")) == 0
+    assert feed(s, InterimTranscriptionFrame("cut the avocado give me a sec", "user", "")) == 1
+
+
 def test_strategy_reopens_after_the_tail():
     s = strategy(EchoGate(tail_s=0.0))
     feed(s, BotStartedSpeakingFrame(), BotStoppedSpeakingFrame())

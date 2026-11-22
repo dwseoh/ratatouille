@@ -405,3 +405,12 @@ def test_pause_said_over_the_coach_cuts_it_and_pauses():
                                               VADUserStoppedSpeakingFrame(stop_secs=0.2), UserStoppedSpeakingFrame(),
                                               SleepFrame(sleep=0.3)])
     assert agent.texts == ["how do I cut it"] and state.session == "paused"
+
+
+def test_give_me_a_sec_over_the_coach_pauses_too():
+    from coach.echo import EchoGate
+    proc, agent, state, session = paused_setup(gate=EchoGate(0.3))
+    run(proc, [BotStartedSpeakingFrame(), VADUserStartedSpeakingFrame(), UserStartedSpeakingFrame(),
+               final("now cut the avocado give me a sec"), VADUserStoppedSpeakingFrame(stop_secs=0.2),
+               UserStoppedSpeakingFrame(), SleepFrame(sleep=0.3)])
+    assert agent.texts == [] and state.session == "paused"
