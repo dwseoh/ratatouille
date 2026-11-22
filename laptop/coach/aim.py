@@ -162,17 +162,15 @@ class Calibration:
                 self.cv["plane"] = _fit_stats(plane.predict(pixels) - angles, w)
             except (ValueError, np.linalg.LinAlgError, FloatingPointError) as e:
                 log.warning("plane model fit failed (%s): using the polynomial", e)
-        if self.plane is not None and (model == "plane" or (model == "auto" and loo)):
+        if model == "plane" and self.plane is not None:
             self.model = "plane"
-        if loo and len(pixels) > MIN_FIT_POINTS:
+        if loo and len(pixels) > MIN_FIT_POINTS:    # leave-one-out: reported, and decides "auto"
             self.cv["poly"]["loo"] = loo_score(loo_errors("poly", pixels, angles, weights=poly_w))
             if self.plane is not None:
                 self.cv["plane"]["loo"] = loo_score(loo_errors("plane", pixels, angles, self.frame, baseline,
                                                                full=self.plane, weights=w, hfov_deg=hfov))
-                if model == "auto":
-                    self.model = "plane" if self.cv["plane"]["loo"] < self.cv["poly"]["loo"] else "poly"
-        elif model == "auto":
-            self.model = "poly"
+                if model == "auto" and self.cv["plane"]["loo"] < self.cv["poly"]["loo"]:
+                    self.model = "plane"
         weights = w if self.model == "plane" else poly_w
         self.points = {"px": pixels.tolist(), "angles": angles.tolist(), "weights": np.round(weights, 3).tolist()}
         return self
@@ -196,8 +194,7 @@ class Calibration:
         if m is self.plane:
             x, y = m.pixels_for([angles])[0]
         else:
-            guess = np.mean(np.asarray(self.points["px"]), axis=0) if self.points else np.array([320.0, 240.0])
-            x, y = m.invert(angles, guess)
+            x, y = m.invert(angles, self._centre())
         return float(x), float(y)
 
     def distance_m(self, px) -> float:
@@ -577,8 +574,11 @@ class Aimer:
             self._final = goal
             self._arrived_at = None
             cur = (self.link.pan, self.link.tilt)
-            via = (self._via_axis(goal[0], cur[0], self.PAN_MIN, self.PAN_MAX, self.APPROACH_DIR[0]),
-                   self._via_axis(goal[1], cur[1], self.TILT_MIN, self.TILT_MAX, self.APPROACH_DIR[1]))
+            # ControlLink still ramping towards an older goal: where the servo physically is isn't known, so
+            # always come in through the approach point
+            busy = bool(getattr(self.link, "moving", False))
+            via = (self._via_axis(goal[0], cur[0], self.PAN_MIN, self.PAN_MAX, self.APPROACH_DIR[0], busy),
+                   self._via_axis(goal[1], cur[1], self.TILT_MIN, self.TILT_MAX, self.APPROACH_DIR[1], busy))
             self._via = via if via != goal else None
         target = self._via if self._via is not None else self._final
         pan, tilt = self._step(self.link.pan, target[0]), self._step(self.link.tilt, target[1])
@@ -597,9 +597,11 @@ class Aimer:
         settle = self.SETTLE_S if hasattr(self.link, "moving") else 0.0
         return now - self._arrived_at >= settle
 
-    def _via_axis(self, goal: float, cur: float, lo: float, hi: float, direction: float) -> float:
+    def _via_axis(self, goal: float, cur: float, lo: float, hi: float, direction: float, busy: bool = False) -> float:
         """Approach point on one axis: goal itself if the move already ends in `direction`, else overshoot."""
-        if self.APPROACH_DEG <= 0 or direction * (goal - cur) > -self.DEADBAND_DEG:
+        if self.APPROACH_DEG <= 0:
+            return goal
+        if not busy and direction * (goal - cur) > -self.DEADBAND_DEG:
             return goal                     # the move already ends the right way (or there's no move)
         return min(max(goal - direction * self.APPROACH_DEG, lo), hi)
 

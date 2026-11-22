@@ -423,3 +423,30 @@ def test_closed_loop_carry_cancels_most_of_a_posture_change():
         g = np.add(calib.angles_for(b), trim)
         return float(np.hypot(*(use.dot_px(g, move=False) - b)))
     assert miss(aimer.carry) < 0.4 * miss((0.0, 0.0)) and miss((0.0, 0.0)) > 5
+
+
+def test_aimer_with_controllink_ramp_ends_every_move_the_same_way():
+    """Against ControlLink's 2 deg/packet ramp (`moving`), retargeting mid-move: the servo output's last move is
+    still pan-up / tilt-down, and on_target waits for the ramp + settle."""
+    link = RampLink(90.0, 10.0)
+    st = State(RECIPE, dets=[Det("lime", 0.9, (300, 40, 320, 60))])
+    calib = Calibration().fit([(x, y) for x in (0, 160, 320, 480, 640) for y in (0, 120, 240, 360, 480)],
+                              [(130 - x / 8, 25 - y / 24) for x in (0, 160, 320, 480, 640)
+                               for y in (0, 120, 240, 360, 480)])
+    t = [0.0]
+    aimer = Aimer(link, calib, st, limits=(60, 140, 0, 30), aim_y=0.5, clock=lambda: t[0], frame_size=lambda: None)
+    aimer.point_at("lime")
+    for k in range(200):
+        if k == 6:                                       # the lime is re-detected elsewhere while the servos move
+            st.dets = [Det("lime", 0.9, (500, 300, 520, 320))]
+        t[0] += 1 / 30
+        aimer.tick()
+        link.pump()
+        if aimer.on_target:
+            break
+    assert aimer.on_target and not link.moving
+    assert tuple(link.out) == pytest.approx(aimer.goal)
+    moves = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(link.trail, link.trail[1:]) if a != b]
+    last_pan = next(d[0] for d in reversed(moves) if d[0] != 0)
+    last_tilt = next(d[1] for d in reversed(moves) if d[1] != 0)
+    assert last_pan > 0 and last_tilt < 0
