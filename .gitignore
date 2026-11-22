@@ -15,3 +15,5 @@ firmware/**/secrets.h
 fp-info-cache
 _autosave-*
 *.lck
+laptop/runs/
+laptop/datasets/

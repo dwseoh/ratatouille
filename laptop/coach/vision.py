@@ -20,17 +20,33 @@ from .contracts import Det  # shared detection type (name, conf, box, center)
 
 HAND = "hand"                       # extra YOLO class for the safety check, not a recipe object
 DEFAULT_CONF = 0.15
-CLASS_CONF = {HAND: 0.25}           # raise the classes that false-trigger; tune on the real counter
+CLASS_CONF = {HAND: 0.25, "lime": 0.25}   # lime 0.25: halves avocado->lime false alarms (4%->2%), 96%->91% found
 STALE_S = 1.0                       # no new camera frame for this long -> State.dets = []
+
+
+def _iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 class Detector:
     def __init__(self, weights: str, device: str, classes: list[str], *, imgsz: int = 640,
-                 conf: dict[str, float] | None = None):
+                 conf: dict[str, float] | None = None, prompts: dict[str, list[str]] | None = None):
+        """`prompts`: optional extra text phrases per class ({"avocado": ["avocado", "halved avocado"]}).
+        YOLO-World matches boxes against text, so several phrasings can catch more looks of one object;
+        every phrase's boxes are reported under the class name. Default: the class name alone."""
         from ultralytics import YOLOWorld  # heavy import, keep lazy
         self.classes = list(dict.fromkeys([*classes, HAND]))
+        texts, self._text_cls = [], []
+        for c in self.classes:
+            for t in dict.fromkeys((prompts or {}).get(c) or [c]):
+                texts.append(t)
+                self._text_cls.append(c)
         self.model = YOLOWorld(weights)
-        self.model.set_classes(self.classes)
+        self.model.set_classes(texts)
         self.device, self.imgsz = device, imgsz
         self.conf = {**CLASS_CONF, **(conf or {})}
         self._floor = min(DEFAULT_CONF, *self.conf.values())   # model-level cut, per-class after
@@ -38,12 +54,22 @@ class Detector:
     def threshold(self, name: str) -> float:
         return self.conf.get(name, DEFAULT_CONF)
 
+    def detect_raw(self, frame, conf: float | None = None) -> list[Det]:
+        """Every box above `conf` (default: the lowest per-class threshold), before per-class thresholds.
+        For tuning (tools/eval_yolo.py); the app uses detect()."""
+        floor = self._floor if conf is None else conf
+        r = self.model.predict(frame, device=self.device, imgsz=self.imgsz, conf=floor, verbose=False)[0]
+        dets = sorted((Det(self._text_cls[int(c)], float(p), tuple(map(float, b)))
+                       for b, c, p in zip(r.boxes.xyxy.tolist(), r.boxes.cls.tolist(), r.boxes.conf.tolist())),
+                      key=lambda d: -d.conf)
+        out: list[Det] = []      # two phrases of one class on the same object -> keep the stronger box
+        for d in dets:
+            if not any(o.name == d.name and _iou(o.box, d.box) > 0.5 for o in out):
+                out.append(d)
+        return out
+
     def detect(self, frame) -> list[Det]:
-        r = self.model.predict(frame, device=self.device, imgsz=self.imgsz, conf=self._floor, verbose=False)[0]
-        names = r.names
-        dets = [Det(names[int(c)], float(p), tuple(map(float, b)))
-                for b, c, p in zip(r.boxes.xyxy.tolist(), r.boxes.cls.tolist(), r.boxes.conf.tolist())]
-        return [d for d in dets if d.conf >= self.threshold(d.name)]
+        return [d for d in self.detect_raw(frame) if d.conf >= self.threshold(d.name)]
 
 
 class Smoother:

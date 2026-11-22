@@ -1,4 +1,4 @@
-"""Dashboard tests: /state is valid and complete, / serves the page, /stream yields MJPEG. No camera, no hardware."""
+"""Dashboard tests: /state is valid and complete, the built pages are served, /stream yields MJPEG. No camera, no hardware."""
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -61,12 +61,7 @@ def test_routes():
     assert r.status_code == 200 and r.json()["step"]["short"] == RECIPE.steps[2].short
     page = client.get("/")
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
-    assert "/state" in page.text and "/stream" in page.text and "Remy says" in page.text
-
-
-def test_page_captions_are_large_and_high_contrast():
-    css = dashboard.PAGE
-    assert "font-size:34px" in css and "--accent:#ffd447" in css          # >= 32 px, bright on dark
+    assert '<div id="root">' in page.text and "Ratatouille" in page.text
 
 
 def test_stream_is_mjpeg_with_boxes():
@@ -140,64 +135,11 @@ def test_caption_follows_the_voice_timeline_when_there_is_one():
     assert dashboard.snapshot(st, None, None, Agent(), cap)["caption"] == "Second sentence."   # not the agent's latest sentence
 
 
-def test_page_shows_one_caption_and_keeps_what_you_said_above_it():
-    page = dashboard.PAGE
-    assert page.index("<h2>You said</h2>") < page.index("<h2>Remy says</h2>")     # what you said never scrolls out of view
-    assert "s.caption" in page and "s.captions" not in page                  # a single caption, not a list
-    assert "position:sticky" in page and "#transcript" in page and "max-height:7.5em" in page
-
-
 def test_snapshot_says_when_the_camera_is_ignored():
     class A(Agent):
         camera_ignored = True
     assert dashboard.snapshot(fake_state(), FakeFrames(), Link(), A())["links"]["camera_ignored"] is True
     assert dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent())["links"]["camera_ignored"] is False
-
-
-# ───────────── light mode + dyslexia font ─────────────
-
-import re  # noqa: E402
-
-
-def _vars(block: str) -> dict[str, str]:
-    return dict(re.findall(r"--([a-z]+):\s*(#[0-9a-fA-F]{6})", block))
-
-
-def _lum(hex_):
-    r, g, b = (int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5))
-    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
-    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
-
-
-def _contrast(a, b):
-    la, lb = sorted((_lum(a), _lum(b)), reverse=True)
-    return (la + 0.05) / (lb + 0.05)
-
-
-def test_page_has_a_light_mode_and_a_dyslexia_font_option_that_are_remembered():
-    page = dashboard.PAGE
-    for needle in ('id="optTheme"', 'id="optFont"', 'data-theme="light"', 'data-font="dyslexic"', '"OpenDyslexic"',
-                   "opendyslexic-latin-400-normal.woff2", "opendyslexic-latin-700-normal.woff2", "localStorage",
-                   '"remy-" + k', "theme=light&font=dyslexic", "Comic Sans MS"):
-        assert needle in page, needle
-    assert "font:16px/1.4 var(--font)" in page and "button { font:inherit; }" in page          # ALL text, buttons included
-    assert page.index("applyOption(") < page.index("<body>")                                   # applied before first paint
-
-
-def test_both_themes_are_readable_wcag_aa():
-    page = dashboard.PAGE
-    dark = _vars(re.search(r":root \{([^}]*)\}", page).group(1))
-    light = {**dark, **_vars(re.search(r':root\[data-theme="light"\] \{([^}]*)\}', page).group(1))}
-    for name, v in (("dark", dark), ("light", light)):
-        for fg in ("text", "dim", "accent", "ok", "bad", "vision"):
-            ratio = _contrast(v[fg], v["panel"])
-            assert ratio >= 4.5, f"{name}: {fg} on panel only {ratio:.1f}:1"
-        assert _contrast(v["text"], v["bg"]) >= 7, f"{name}: main text on background"
-
-
-def test_the_options_are_keyboard_accessible_buttons():
-    page = dashboard.PAGE
-    assert "<button" in page and ".opt:focus-visible" in page and "aria-pressed" in page
 
 
 # ───────────── visuals: step photo, checklist, phone page, QR ─────────────
@@ -248,10 +190,7 @@ def test_cook_page_and_info_and_qr(tmp_path):
     client = TestClient(dashboard.build_app(fake_state(), FakeFrames(), Link(), Agent(), recipes_root=tmp_path))
     page = client.get("/cook")
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
-    for needle in ("/state", "wireOptions()", 'id="optTheme"', 'id="optFont"', "OpenDyslexic", 'id="how"', 'id="photo"',
-                   "viewport"):
-        assert needle in page.text, needle
-    assert "%%" not in page.text                                                # every template slot was filled
+    assert '<div id="root">' in page.text and "step by step" in page.text and "viewport" in page.text
     info = client.get("/info").json()
     assert info["cook_url"].endswith("/cook") and info["cook_url"].startswith("http://")
     qr = client.get("/cook-qr.svg")
@@ -261,11 +200,67 @@ def test_cook_page_and_info_and_qr(tmp_path):
         assert qr.status_code == 404
 
 
-def test_dashboard_page_has_the_step_card_photo_and_phone_link_and_no_template_leftovers():
-    page = dashboard.PAGE
-    for needle in ('id="stepimg"', 'id="how"', 'id="qr"', 'id="cookurl"', "How to do this step", "wireOptions()", "/info"):
-        assert needle in page, needle
-    assert "%%" not in page
+# ───────────── the built frontend (laptop/frontend -> coach/static) ─────────────
+
+import re  # noqa: E402
+
+# Every field the frontend reads from /state (see AppState in laptop/frontend/src/api.ts). Rename one on either side
+# and the test below fails, instead of the page silently going blank.
+FRONTEND_FIELDS = {
+    "": ["session", "recipe", "transcript", "caption", "speaking", "user_talking", "events", "latency", "laser",
+         "visible", "links", "step"],
+    "step": ["n", "total", "short", "goal", "how", "tips", "image_url", "image_note"],
+    "laser": ["target", "on_target"],
+    "links": ["camera", "camera_ignored", "s3", "vbat_mv"],
+}
+
+
+def test_state_has_every_field_the_frontend_reads_and_the_frontend_still_names_them():
+    snap = dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent())
+    api_ts = Path(__file__).resolve().parent.parent / "frontend" / "src" / "api.ts"
+    source = api_ts.read_text() if api_ts.exists() else None
+    for parent, names in FRONTEND_FIELDS.items():
+        block = snap[parent] if parent else snap
+        for name in names:
+            assert name in block, f"/state is missing {parent + '.' if parent else ''}{name}"
+            if source is not None:
+                assert re.search(rf"\b{name}\b", source), f"frontend/src/api.ts no longer mentions {name}"
+
+
+def _page_links(html: str) -> list[str]:
+    """Local files a built page loads (scripts, styles, icons, preloads), e.g. /assets/main-abc.js."""
+    return re.findall(r'(?:src|href)="(/[^"]+)"', html)
+
+
+def test_the_built_pages_load_only_files_that_exist_and_the_server_serves_them():
+    client = TestClient(dashboard.build_app(fake_state(), FakeFrames(), Link(), Agent()))
+    for route, name in (("/", "index.html"), ("/cook", "cook.html")):
+        html = client.get(route).text
+        assert html == (dashboard.STATIC_DIR / name).read_text()
+        links = _page_links(html)
+        assert any(link.startswith("/assets/") and link.endswith(".js") for link in links), f"{name} loads no script"
+        for link in links:
+            assert (dashboard.STATIC_DIR / link.lstrip("/")).is_file(), f"{name} references {link}, not in coach/static/"
+            assert client.get(link).status_code == 200, f"{link} is not served"
+    for icon in ("/favicon-32-light.png", "/favicon-32-dark.png", "/favicon-180.png", "/menu.svg"):   # used by the code
+        assert client.get(icon).status_code == 200, icon
+
+
+def test_assets_never_shadow_the_api_and_unknown_or_escaping_paths_are_404():
+    client = TestClient(dashboard.build_app(fake_state(), FakeFrames(), Link(), Agent()))
+    assert client.get("/state").headers["content-type"].startswith("application/json")
+    assert client.get("/nope.js").status_code == 404
+    for evil in ("/../dashboard.py", "/%2e%2e/dashboard.py", "/assets/../../dashboard.py", "/..%2fdashboard.py"):
+        r = client.get(evil)
+        assert r.status_code in (404, 400) and b"build_app" not in r.content, evil
+
+
+def test_a_missing_build_says_how_to_build_and_the_api_still_works(tmp_path):
+    client = TestClient(dashboard.build_app(fake_state(), FakeFrames(), Link(), Agent(), static_dir=tmp_path / "nope"))
+    for route in ("/", "/cook"):
+        r = client.get(route)
+        assert r.status_code == 503 and "npm run build" in r.text
+    assert client.get("/state").status_code == 200
 
 
 def test_the_laser_target_is_much_more_visible_than_the_other_boxes():
@@ -296,5 +291,12 @@ def test_snapshot_shows_pause_timers_cook_notes_and_servings():
     assert snap["cook_notes"] == ["no cilantro"] and snap["servings"] == 4
 
 
-def test_page_shows_the_paused_state():
-    assert "PAUSED" in dashboard.PAGE and 'id="extras"' in dashboard.PAGE
+def test_state_carries_the_paused_state_and_timers():
+    # the page is the React build now (laptop/frontend); /state is where pause and timers reach it
+    import time
+    st = State(RECIPE)
+    st.session, st.paused_at = "paused", time.monotonic() - 65
+    st.timers["eggs"] = time.monotonic() + 90
+    snap = dashboard.snapshot(st)
+    assert snap["paused"] is True and 64 <= snap["paused_for_s"] <= 66
+    assert snap["timers"] and snap["timers"][0]["label"] == "eggs" and 88 <= snap["timers"][0]["left_s"] <= 90

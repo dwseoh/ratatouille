@@ -1,0 +1,1241 @@
+{
+ "_doc": "Per-frame presence for held-out frames (reviewed). avo_b, lime_b = separate recordings; tomato_a 045-058 and all3_a 044-058 = held-out tail of the training recordings (same session).",
+ "frames": {
+  "avo_b_000.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_001.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_002.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_003.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_004.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_005.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_006.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_007.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_008.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_009.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_010.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_011.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_012.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_013.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_014.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_015.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_016.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_017.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_018.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_019.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_020.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_021.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_022.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_023.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_024.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_025.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_026.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_027.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_028.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_029.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_030.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_031.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_032.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_033.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_034.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_035.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_036.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_037.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_038.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_039.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_040.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_041.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_042.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_043.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_044.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_045.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_046.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_047.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_048.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_049.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_050.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_051.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_052.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_053.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_054.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_055.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_056.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_057.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_058.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "avo_b_059.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_000.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_001.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_002.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_003.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_004.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_005.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_006.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_007.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_008.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_009.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_010.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_011.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_012.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_013.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_014.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_015.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_016.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_017.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_018.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_019.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_020.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_021.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_022.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_023.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_024.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_025.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_026.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_027.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_028.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_029.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_030.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_031.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_032.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_033.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_034.jpg": {
+   "present": [
+    "lime"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_035.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_036.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_037.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_038.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_039.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_040.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_041.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_042.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_043.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_044.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_045.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_046.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_047.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_048.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_049.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_050.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_051.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_052.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_053.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_054.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_055.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "lime_b_056.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_045.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_046.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_047.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_048.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_049.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_050.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_051.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_052.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_053.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_054.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_055.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_056.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_057.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "tomato_a_058.jpg": {
+   "present": [
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_044.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_045.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_046.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_047.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_048.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_049.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_050.jpg": {
+   "present": [
+    "avocado"
+   ],
+   "ignore": [
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_051.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_052.jpg": {
+   "present": [],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_053.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_054.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_055.jpg": {
+   "present": [
+    "avocado",
+    "lime",
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_056.jpg": {
+   "present": [],
+   "ignore": [
+    "avocado",
+    "lime",
+    "tomato",
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_057.jpg": {
+   "present": [
+    "avocado",
+    "lime",
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  },
+  "all3_a_058.jpg": {
+   "present": [
+    "avocado",
+    "lime",
+    "tomato"
+   ],
+   "ignore": [
+    "cutting board",
+    "hand"
+   ]
+  }
+ }
+}

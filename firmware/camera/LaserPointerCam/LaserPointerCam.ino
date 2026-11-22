@@ -27,15 +27,24 @@
 const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 
 // ---------- camera settings ----------
-// This board's sensor is an OV3660 (docs/constraints.md 4.3).
+// This board's sensor is an OV3660 (docs/design-notes.md, Camera).
 // Settings = Freenove's Sketch_06.1_CameraWebServer, which streams cleanly on this board. With 20 MHz /
 // 2 buffers / GRAB_LATEST the old sketch got corrupted, banded JPEGs and 3-4 s per frame.
 // Change ONE thing at a time from here, and keep a setting only if the [stream] line stays healthy.
 #define XCLK_HZ      10000000
-#define FRAME_SIZE   FRAMESIZE_QVGA   // 320x240. Next to try: FRAMESIZE_HVGA (480x320)
+#define FRAME_SIZE   FRAMESIZE_VGA   // 640x480: works with these settings (10 MHz, 1 buffer). Fallback: FRAMESIZE_QVGA
 #define FB_COUNT     1
 #define GRAB_MODE    CAMERA_GRAB_WHEN_EMPTY
 #define JPEG_QUALITY 12               // lower number = better image, bigger frames
+
+// Image look (OV3660 sensor registers; no effect on frame rate). Ranges: contrast/brightness/sharpness -3..3,
+// saturation -4..4. The defaults (0) look washed out on this module. Find good values live with Freenove's
+// CameraWebServer sliders, copy them here, then DON'T change them after recording YOLO training frames
+// (a different look = different images = retrain).
+#define CONTRAST     2
+#define SATURATION   2
+#define BRIGHTNESS   0
+#define SHARPNESS    1
 
 // Camera pins: CAMERA_MODEL_WROVER_KIT (Freenove ESP32-WROVER CAM)
 #define PWDN_GPIO_NUM  -1
@@ -96,7 +105,12 @@ static bool cameraInit() {
     s->set_hmirror(s, 1);
     s->set_vflip(s, 1);
   }
-  s->set_brightness(s, 1);
+  s->set_contrast(s, CONTRAST);
+  s->set_saturation(s, SATURATION);
+  s->set_brightness(s, BRIGHTNESS);
+  s->set_sharpness(s, SHARPNESS);
+  Serial.printf("[boot] look: contrast %d saturation %d brightness %d sharpness %d\n",
+                CONTRAST, SATURATION, BRIGHTNESS, SHARPNESS);
   s->set_framesize(s, FRAME_SIZE);
   s->set_quality(s, JPEG_QUALITY);
   // Tip: if the laser dot washes out, lower exposure a bit:

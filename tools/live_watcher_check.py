@@ -21,6 +21,9 @@ from coach.watcher import Watcher  # noqa: E402
 
 RECIPE = Recipe.load(ROOT / "laptop" / cfg.recipe_path)
 PHOTOS = {p.stem: cv2.imread(str(p)) for p in (ROOT / "tools" / "test_frames").glob("*.jpg")}
+NEEDED = ("avocado_hold", "avocado_halves", "mash_bowl")
+if missing := [n for n in NEEDED if n not in PHOTOS]:
+    sys.exit(f"Missing tools/test_frames/{', '.join(n + '.jpg' for n in missing)}. See tools/test_frames/README.md.")
 
 # (photo, step index, expected step_done)
 CASES = [

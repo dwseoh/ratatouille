@@ -199,7 +199,7 @@ def test_aimer_rescales_a_bigger_frame_and_refuses_a_rotation(real_cal):
     centre = rig.targets(PAN, TILT, n=1, rng=np.random.default_rng(7))[0] - rig.n * 0.025
     st = State(RECIPE, dets=[Det("lime", 0.9, obj_box(big, centre, 0.025))])
     link = SpyLink()
-    aimer = Aimer(link, calib, st, limits=LIMITS, frame_size=lambda: (640, 480), cam_rotate="180")
+    aimer = Aimer(link, calib, st, limits=LIMITS, frame_size=lambda: (640, 480), cam_rotate="180", clock=lambda: 1000.0)
     assert aimer.point_at("lime") == "ok" and link.laser
     run_aimer(aimer)
     small_box = obj_box(rig, centre, 0.025)
@@ -209,7 +209,7 @@ def test_aimer_rescales_a_bigger_frame_and_refuses_a_rotation(real_cal):
     assert (TFT_STATUS, "CALIB 320x240 SCALED") in link.texts
 
     link2 = SpyLink()
-    aimer2 = Aimer(link2, calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="0")
+    aimer2 = Aimer(link2, calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="0", clock=lambda: 1000.0)
     assert aimer2.point_at("lime") == "ok" and not link2.laser       # calibration doesn't match: laser stays off
     run_aimer(aimer2, 30)
     assert not link2.laser and not aimer2.on_target and (link2.pan, link2.tilt) == (90.0, 60.0)
@@ -227,7 +227,7 @@ def test_aimer_lands_on_fruit_and_reports_unreachable_ones(real_cal):
         if not (PAN[0] + 1 <= c[0] <= PAN[1] - 1 and TILT[0] + 1 <= c[1] <= TILT[1] - 1):
             continue
         st = State(RECIPE, dets=[Det("lime", 0.9, obj_box(rig, centre, 0.025))])
-        aimer = Aimer(SpyLink(), calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="180")
+        aimer = Aimer(SpyLink(), calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="180", clock=lambda: 1000.0)
         assert aimer.point_at("lime") == "ok"
         run_aimer(aimer)
         assert aimer.on_target
@@ -238,7 +238,7 @@ def test_aimer_lands_on_fruit_and_reports_unreachable_ones(real_cal):
     bottom = rig.on_counter([(160.0, 220.0)])[0] - rig.n * 0.025
     st = State(RECIPE, dets=[Det("lime", 0.9, obj_box(rig, bottom, 0.025))])
     link = SpyLink()
-    aimer = Aimer(link, calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="180")
+    aimer = Aimer(link, calib, st, limits=LIMITS, frame_size=lambda: (320, 240), cam_rotate="180", clock=lambda: 1000.0)
     assert aimer.point_at("lime") == OUT_OF_REACH and not link.laser and aimer.target is None
 
 

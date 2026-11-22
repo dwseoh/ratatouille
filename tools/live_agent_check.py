@@ -24,6 +24,9 @@ from coach.contracts import Det, FakeAimer, FakeLink, FakeSteps, Recipe, State, 
 
 RECIPE = Recipe.load(ROOT / "laptop" / cfg.recipe_path)
 FRAMES = {p.stem: cv2.imread(str(p)) for p in (ROOT / "tools" / "test_frames").glob("*.jpg")}
+NEEDED = ("avocado_hold", "avocado_halves", "mash_bowl")
+if missing := [n for n in NEEDED if n not in FRAMES]:
+    sys.exit(f"Missing tools/test_frames/{', '.join(n + '.jpg' for n in missing)}. See tools/test_frames/README.md.")
 ALL = tuple(RECIPE.objects)
 results: list[tuple[str, bool, str]] = []
 

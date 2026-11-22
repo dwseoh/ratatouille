@@ -6,7 +6,7 @@ Reads the sizes from enclosure.scad so it stays in sync, then writes:
   assembly.scad  the same parts as one standalone OpenSCAD file you can spin around
 
 The parts are blocks with roughly the right size, not exact models. Sizes the team hasn't
-measured yet (pan-tilt height, TFT board size) are guesses, see constraints.md section 7.
+measured yet (pan-tilt height, TFT board size) are guesses; measure and update the variables.
 
 Run: python3 assembly.py   (needs ImageMagick `convert` for the PNG)
 """

@@ -69,9 +69,11 @@ class Config:
     echo_gate: bool = _env("ECHO_GATE", "1").lower() in ("1", "true", "yes")
     echo_tail_s: float = float(_env("ECHO_TAIL_S", "0.3"))   # raise to ~0.5 if a Bluetooth speaker lags
 
-    yolo_weights: str = _env("YOLO_WEIGHTS", "yolov8s-worldv2.pt")
+    # Fine-tuned on our own ESP-cam frames (tools/train_yolo.py). The pretrained yolov8s-worldv2.pt found ~0%
+    # of avocados/limes/tomatoes on this camera; this one 90% / 96% / 100% on held-out frames (2026-11-22).
+    yolo_weights: str = _env("YOLO_WEIGHTS", "yolo-world-guac.pt")
     yolo_device: str = _env("YOLO_DEVICE", "mps")   # Apple GPU
-    yolo_imgsz: int = int(_env("YOLO_IMGSZ", "640"))   # 480 is faster, 640 finds small things better
+    yolo_imgsz: int = int(_env("YOLO_IMGSZ", "320"))   # = the camera (QVGA) and what yolo-world-guac.pt was trained at
     recipe_path: str = _env("RECIPE", "recipes/guacamole.json")
     dashboard_port: int = int(_env("DASHBOARD_PORT", "8000"))
     laser_close_px: int = 10          # dot within this many px of the target = on target

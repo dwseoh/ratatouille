@@ -7,7 +7,7 @@ Calibration holds two models fitted from the same click points (see aim_model.py
 The one with the lower leave-one-out error is used. calibration.json also records the frame size and CAM_ROTATE it
 was made with, so a resolution change is rescaled and a rotation change is refused instead of aiming wrong.
 
-Closed-loop correction on the seen laser dot is stretch (see docs/cut-list.md): Aimer(..., closed_loop=True)
+Closed-loop correction on the seen laser dot is stretch (see docs/design-notes.md): Aimer(..., closed_loop=True)
 plus a dot.DotTracker writing State.dot. Off by default; with it off nothing here reads State.dot.
 """
 from __future__ import annotations
