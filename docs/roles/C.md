@@ -15,7 +15,8 @@ Read first: `laptop/coach/contracts.py` (the interfaces), `docs/task-specs.md` (
 | `laptop/coach/agent.py` | `Agent` (implements `AgentAPI`): Claude calls, streaming, tools, fallbacks |
 | `laptop/coach/steps.py` | `Steps` (implements `StepsAPI`): the only code that changes `State.step` (new) |
 | `laptop/coach/checkin.py` | Check-in loop: the coach speaks up on its own (new) |
-| `laptop/coach/dashboard.py` | FastAPI dashboard: `/`, `/state`, `/stream` |
+| `laptop/coach/dashboard.py` | FastAPI dashboard: `/`, `/cook`, `/state`, `/stream`, and the built pages in `coach/static/` |
+| `laptop/frontend/` | Source of the two web pages (React + TypeScript). `npm run build` there writes `laptop/coach/static/`, which is committed. See its README |
 | `laptop/coach/agent_cli.py` | Typed-input test harness, no voice needed (`python -m coach.agent_cli`) |
 | `laptop/recipes/guacamole.json` | The recipe (already in the new facts format) |
 | `laptop/tests/test_steps.py` | Step machine tests (new) |
@@ -295,8 +296,9 @@ Do these after check-ins work (Sat late AM / Sun AM). Settings go in `config.py`
      "talk less" / "talk more" to change it. Some autistic users find constant comments overwhelming.
    - Never use time pressure in the prompt ("quickly", "hurry").
 5. **Captions on the dashboard.**
-   - A big, high-contrast panel: current step (large text), the last coach sentence and the user's last words as
-     live captions (font >= 32 px). Pulls `State.transcript` + the agent's sentences (keep the last 3).
+   - The current step (name, goal, how-to list), the coach's current sentence next to Remy's image and the user's last
+     words next to theirs, as live captions. Pulls `State.transcript` + the agent's sentences (keep the last 3).
+   - Light/dark mode and a dyslexia font (OpenDyslexic) are in the page's menu.
    - The TFT already shows the step. Together these cover hearing loss and auditory processing.
 
 Pitch: pick ONE persona for the demo (e.g. relearning to cook after a stroke, one good hand, long instructions
@@ -318,7 +320,8 @@ asyncio.create_task(server.serve())
 
 | Route | What |
 |---|---|
-| `GET /` | One HTML page. The video on the left, panels on the right. JS polls `/state` every 250 ms. |
+| `GET /` | The dashboard page (built from `laptop/frontend`, served from `coach/static/`). JS polls `/state` every 250 ms. |
+| `GET /cook` | The phone page: one step at a time, big text (same build). `/info` gives its address, `/cook-qr.svg` a QR code for it. |
 | `GET /state` | JSON (below) |
 | `GET /stream` | MJPEG: `StreamingResponse` with `media_type="multipart/x-mixed-replace; boundary=frame"`, yielding `b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"` at ~10 fps. Each frame goes through `annotate(frame, state.dets, state.dot, state.target)` (draft exists). |
 
@@ -338,9 +341,10 @@ asyncio.create_task(server.serve())
 ```
 `latency` is `state.turns[-1].ms()`. `events` is the last ~20.
 
-**Panels:** live video with boxes + laser target, step n/7 + `short` + `goal`, live transcript, coach speaking
-indicator, event log, latency bars for the last turn (first token / first audio / laser), link status
-(camera, S3, battery).
+**Panels:** live video with boxes + laser target, step n/7 + `short` + `goal` + how-to list, step picture, live
+transcript and the coach's current sentence (both with talking animations), event log, latency bars for the last turn
+(first token / first audio / laser), link status (camera, S3, battery), laser target and what the camera sees.
+Which `/state` fields the page reads is listed in `laptop/frontend/README.md`.
 
 **Pitfalls:** `cv2.imencode` blocks for a few ms. Run it in `asyncio.to_thread` so the event loop (voice!) never
 stalls. Don't encode faster than 10 fps. Build the page with a fake `State` (`fake_dets()`, made-up turns) first;

@@ -1,20 +1,27 @@
 """Judge-facing dashboard (S2): what the coach sees, thinks and says, on one page. Runs in the same process.
 
-    GET /         one HTML page (polls /state every 250 ms; works on a phone on the same hotspot)
-    GET /state    JSON snapshot of State (see `snapshot`)
-    GET /stream   MJPEG of the annotated camera feed (YOLO boxes, laser dot, target), at most 10 fps
+    GET /             the dashboard page (built from laptop/frontend, served from coach/static/)
+    GET /cook         the phone page: one step at a time, big text (same build)
+    GET /state        JSON snapshot of State (see `snapshot`); the page polls it every 250 ms
+    GET /stream       MJPEG of the annotated camera feed (YOLO boxes, laser dot, target), at most 10 fps
+    GET /recipe-image/{n}, /info, /cook-qr.svg    step photo, phone-page address, QR code for it
+    GET /<file>       everything else the build contains (JS, CSS, fonts, images)
 
-Panels: live video, current step (big), captions of what the coach just said (large, high contrast: also an
-accessibility feature), live transcript, speaking indicator, event log (incl. fallbacks and push-backs),
-latency bars for the last turn, link status (camera, S3, battery).
+The pages show: what the coach says and what the user said (with talking animations), the current step and its
+how-to list, the step photo, the QR code + link for the phone page, the camera feed, link status (camera, S3,
+battery), laser target and what the camera sees, latency bars for the last turn, and the event log (incl. fallbacks
+and push-backs). Light/dark mode and a dyslexia font are in the page's menu (also settable with ?theme=dark|light
+and ?font=dyslexic|default). The page's source is laptop/frontend; after changing it run `npm run build` there.
 
     task = asyncio.create_task(serve(build_app(state, frames, link, agent), cfg.dashboard_port))
 """
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -28,6 +35,7 @@ except ImportError:       # the dashboard is optional; build_app() will say what
 
 log = logging.getLogger(__name__)
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"      # the built frontend (npm run build in laptop/frontend)
 STREAM_FPS = 10
 EVENTS_SHOWN = 20
 
@@ -108,9 +116,10 @@ def _encode(img) -> bytes:
     return buf.tobytes() if ok else b""
 
 
-def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_root=RECIPES_DIR):
+def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_root=RECIPES_DIR, static_dir=STATIC_DIR):
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+    from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="Remy dashboard", docs_url=None, redoc_url=None)
     app.state.port = 8000                               # serve() sets the real one
@@ -130,10 +139,19 @@ def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_
                             headers={"Cache-Control": "no-cache"})
         return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
-    @app.get("/cook", response_class=HTMLResponse)
+    def page(name: str):
+        """One of the built pages (index.html / cook.html), or a clear message if the frontend was never built."""
+        path = Path(static_dir) / name
+        if not path.is_file():
+            hint = "cd laptop/frontend &amp;&amp; npm install &amp;&amp; npm run build"
+            return HTMLResponse(f"<h1>The dashboard page is not built</h1><p>Run: <code>{hint}</code></p>"
+                                f"<p>(looked for {html.escape(str(path))}; /state and /stream still work)</p>", status_code=503)
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})        # asset names are hashed; the page is not
+
+    @app.get("/cook")
     async def cook():
         """Phone page: the current step, its photo and how to do it, big and easy to read."""
-        return COOK_PAGE
+        return page("cook.html")
 
     def cook_url(request: Request) -> str:
         host = lan_ip() or request.url.hostname or "localhost"
@@ -151,9 +169,9 @@ def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_
             raise HTTPException(status_code=404, detail="QR codes need: pip install segno")
         return Response(svg, media_type="image/svg+xml")
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/")
     async def index():
-        return PAGE
+        return page("index.html")
 
     async def mjpeg():
         period = 1.0 / STREAM_FPS
@@ -168,6 +186,9 @@ def build_app(state, frames=None, link=None, agent=None, captions=None, recipes_
     @app.get("/stream")
     async def stream():
         return StreamingResponse(mjpeg(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    if Path(static_dir).is_dir():       # last, so it can never shadow an API route; serves /assets/..., icons, fonts
+        app.mount("/", StaticFiles(directory=static_dir), name="static")
 
     return app
 
@@ -222,6 +243,3 @@ async def serve(app, port: int) -> None:
         await asyncio.wait_for(task, timeout=3)
         raise
 
-
-from .pages import COOK_PAGE  # noqa: E402
-from .pages import DASHBOARD_PAGE as PAGE  # noqa: E402  (kept as dashboard.PAGE for tests and callers)
