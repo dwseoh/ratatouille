@@ -450,3 +450,47 @@ def test_aimer_with_controllink_ramp_ends_every_move_the_same_way():
     last_pan = next(d[0] for d in reversed(moves) if d[0] != 0)
     last_tilt = next(d[1] for d in reversed(moves) if d[1] != 0)
     assert last_pan > 0 and last_tilt < 0
+
+
+def test_check_measures_a_saved_calibration_with_the_dot_finder(tmp_path, monkeypatch, capsys):
+    import asyncio
+
+    import coach.calibrate as calibrate
+    import coach.control as control
+    import coach.frames as frames_mod
+
+    def cam(pan, tilt):
+        return (pan - 30) * 8, (90 - tilt) * 8
+
+    grid = make_grid((40.0, 100.0), (32.0, 70.0), 4)
+    out = tmp_path / "calibration.json"
+    fit_and_save([cam(*g) for g in grid], grid, out, frame=(640, 480), rotate="0")
+    link = FakeLink()
+
+    class Link:
+        async def start(self):
+            return link
+
+    class Frames:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            return self
+
+        def stop(self):
+            pass
+
+        def latest(self):
+            return np.zeros((480, 640, 3), np.uint8), 0.0
+
+    async def fake_blink(link, frames, near=None, lag_s=0.0, sleep=asyncio.sleep):
+        x, y = cam(link.pan, link.tilt)
+        return x + 2.0, y                                       # the dot lands 2 px right of where it was sent
+    monkeypatch.setattr(control, "ControlLink", lambda *a, **k: Link())
+    monkeypatch.setattr(frames_mod, "FrameGrabber", Frames)
+    monkeypatch.setattr(calibrate, "blink_dot", fake_blink)
+    monkeypatch.setattr(calibrate, "_cam_rotate", lambda: "0")
+    calibrate.main(["--check", "5", "--out", str(out), "--settle-ms", "0"])
+    text = capsys.readouterr().out
+    assert "VERIFY: 5 points, mean 0.25 deg" in text and not link.laser

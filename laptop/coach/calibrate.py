@@ -16,6 +16,9 @@ leave-one-out error is used, and both are printed. calibration.json records the 
 (laser off for a moment, the dot must disappear) locates the dot; points where it isn't found are skipped.
 Same save gate and error report, then an automatic verify pass (--verify N, 0 = off).
 
+--check [N]: no window, no clicks: the laser visits N (default 8) random spots of the saved calibration and the dot
+finder + blink check measures where the dot really lands. Prints mean/max error in degrees and cm.
+
 --eval: print what's in calibration.json (models, fit and leave-one-out errors, geometry, how far the two models
 disagree over the reachable area, frame/rotation vs the current .env). No hardware needed.
 
@@ -529,6 +532,47 @@ async def _auto_main(args, link, frames, out: Path) -> None:
     link.laser = False
 
 
+async def _check_main(args, link, frames, out: Path) -> None:
+    if not out.exists():
+        print(f"no {out}: calibrate first")
+        return
+    if not await wait_for_frame(frames):
+        print("no camera frames, check CAM_URL")
+        return
+    calib = Calibration.load(out)
+    fc = calib.frame_check(frame_size(frames), _cam_rotate())
+    if not fc.ok or fc.scale != 1.0:
+        print(fc.msg)
+        if not fc.ok:
+            return
+    vs = VerifySession(calib, args.check, frame=calib.frame)
+    print(f"checking {out} ({calib.model} model) at {len(vs.targets)} random spots with the dot finder, keep the "
+          f"counter clear of people")
+    if fc.scale != 1.0:     # measured dots are in the camera's pixels now: compare in calibration pixels
+        vs.targets = [(tuple(fc.to_runtime(px)), ang) for px, ang in vs.targets]
+        vs.calib = _RescaledCalib(calib, fc)
+    await auto_verify(link, frames, vs, settle_s=args.settle_ms / 1000)
+
+
+def _cam_rotate():
+    from .config import CONFIG
+    return CONFIG.cam_rotate
+
+
+class _RescaledCalib:
+    """A Calibration seen through a FrameCheck (runtime pixels in, same answers), for --check at another size."""
+
+    def __init__(self, calib: Calibration, fc):
+        self._c, self._fc = calib, fc
+        self.plane = None               # cm on the counter falls back to deg * distance
+
+    def angles_many(self, pxs, height: float = 0.0):
+        return self._c.angles_many(self._fc.to_calib(pxs), height)
+
+    def distance_m(self, px):
+        return self._c.distance_m(tuple(self._fc.to_calib(px)))
+
+
 async def _main(args) -> None:
     import cv2
 
@@ -540,6 +584,14 @@ async def _main(args) -> None:
     frames = FrameGrabber(int(cam) if str(cam).isdigit() else cam).start()
     link = await ControlLink(args.ctl or CONFIG.ctl_host, CONFIG.ctl_port).start()
     out = Path(args.out)
+    if args.check:
+        try:
+            await _check_main(args, link, frames, out)
+        finally:
+            link.laser = False
+            await asyncio.sleep(0.1)
+            frames.stop()
+        return
     if args.auto:
         try:
             await _auto_main(args, link, frames, out)
@@ -687,6 +739,8 @@ def main(argv=None) -> None:
     ap.add_argument("--verify", type=int, default=None,
                     help=f"verify points ('v' in the window; after --auto, default {VERIFY_N}, 0 = skip)")
     ap.add_argument("--eval", action="store_true", help="print what calibration.json holds and how good it is")
+    ap.add_argument("--check", type=int, nargs="?", const=VERIFY_N, default=0, metavar="N",
+                    help=f"measure the saved calibration at N random spots with the dot finder (default {VERIFY_N})")
     ap.add_argument("--cam", default=None, help="camera URL (default CAM_URL from laptop/.env)")
     ap.add_argument("--ctl", default=None, help="S3 IP or host (default CTL_HOST from laptop/.env)")
     args = ap.parse_args(argv)

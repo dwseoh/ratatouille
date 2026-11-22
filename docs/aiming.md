@@ -141,8 +141,10 @@ From `laptop/`, on the box at the demo counter, standing the way you'll stand du
 4. Verify: press `v` in the same window. The laser visits 8 random reachable spots (cross on screen = where it was
    sent); click the dot each time (`s` if it's not visible). It prints the error per spot and
    `VERIFY: 8 points, mean X deg (~Y cm), max ...`. Press `a` to add those points to the calibration and refit.
-   With the dot finder instead of clicks: `python3 -m coach.calibrate --auto` (sweep + 8-point auto verify), or the
-   browser page's **Auto verify** (`python3 -m coach.calib_web`, http://127.0.0.1:8001).
+   With the dot finder instead of clicks: `python3 -m coach.calibrate --check` measures the saved calibration at 8
+   random spots (no window, no clicks; needs the dot finder to see the dot under the room's light),
+   `python3 -m coach.calibrate --auto` does the sweep + an 8-point auto verify, or the browser page's
+   **Auto verify** (`python3 -m coach.calib_web`, http://127.0.0.1:8001).
 5. Check the file any time, no hardware: `python3 -m coach.calibrate --eval`.
 6. Spot-check live: `python3 -m coach.jog` now draws a cyan circle where the calibration expects the dot for the
    current angles. Jog around the whole reachable area; the dot should stay inside the circle.

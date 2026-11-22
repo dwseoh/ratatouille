@@ -89,6 +89,7 @@ python3 -m coach.calibrate --pan-min 75 --pan-max 125 --tilt-min 3 --tilt-max 17
   It prints `VERIFY: mean ... deg (~cm), max ...`. **Good: mean under ~0.6 deg, max under ~1.5 deg.** `a` adds those
   points to the calibration and refits.
 - `t` test mode: click spots on the picture, the laser goes there. `q` to finish.
+- Re-check later without clicking (dot finder): `python3 -m coach.calibrate --check`.
 - Check the saved file any time (no hardware): `python3 -m coach.calibrate --eval`.
 - `python3 -m coach.jog` now shows a cyan circle where the calibration expects the dot: jog around, the dot should
   stay in it everywhere.
