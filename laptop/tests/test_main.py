@@ -1,5 +1,6 @@
 """main.py integration: the real Aimer + fakes for everything that needs hardware, keys or a mic."""
 import asyncio
+import re
 import time
 
 import numpy as np
@@ -322,3 +323,134 @@ def test_full_seven_step_run_with_pushback_and_a_vision_ask():
     assert shown[0].startswith("Step 2") and len(shown) == len(app.state.recipe.steps) - 1
     assert any("watcher disagrees" in e.text for e in app.state.events)
     assert any("asking the user" in e.text for e in app.state.events)
+
+
+# ───────────── pause / resume, timers, the new tools in typing mode ─────────────
+
+def _spy_texts(app):
+    texts = []
+    orig = app.agent.turn
+
+    async def spy(text, frames, on_sentence):
+        texts.append(text)
+        return await orig(text, frames, on_sentence)
+    app.agent.turn = spy
+    return texts
+
+
+@pytest.mark.timeout(15)
+def test_type_mode_pause_ignores_chatter_and_resumes_with_a_welcome_back():
+    link = RecLink()
+
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=link, calib=linear_calib(), agent=FakeAgent())
+        texts = _spy_texts(app)
+        await app.run(lines=["where's the lime", "pause", "how chunky should it be", "I'm back, where was I?"])
+        return app, texts
+
+    app, texts = asyncio.run(go())
+    assert texts[0] == "where's the lime" and len(texts) == 2          # the chatter while paused never reached it
+    assert texts[1].startswith("[session resumed after") and texts[1].endswith("User: I'm back, where was I?")
+    assert app.state.session == "active"
+    assert (0, "paused: say I'm back") in link.texts and (0, "cooking") in link.texts
+    events = [e.text for e in app.state.events]
+    assert any(e.startswith("session paused") for e in events) and any(e.startswith("session resumed") for e in events)
+
+
+@pytest.mark.timeout(15)
+def test_type_mode_paused_safety_question_and_start_over():
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=RecLink(), calib=linear_calib(),
+                                        agent=FakeAgent())
+        texts = _spy_texts(app)
+        app.steps.confirm()                                            # on step 2
+        await app.run(lines=["give me a sec", "where's the lime", "ow I burned my hand", "start over"])
+        return app, texts
+
+    app, texts = asyncio.run(go())
+    assert texts == ["ow I burned my hand"]                           # answered while paused; no pointing
+    assert app.state.step == 0 and app.state.session == "active"      # "start over" works while paused
+
+
+@pytest.mark.timeout(15)
+def test_button_starts_pauses_and_resumes():
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=RecLink(), calib=linear_calib(),
+                                        agent=FakeAgent())
+        calls = []
+
+        class Spy:
+            async def start(self):
+                calls.append("start")
+
+            async def pause(self, why):
+                calls.append("pause")
+
+            async def resume(self, why, greet=False):
+                calls.append(("resume", greet))
+        app.button_pressed()                                           # no session yet: nothing
+        app.session = Spy()
+        for s in ("idle", "active", "paused"):
+            app.state.session = s
+            app.button_pressed()
+        await asyncio.sleep(0.05)
+        return calls
+
+    assert asyncio.run(go()) == ["start", "pause", ("resume", True)]
+
+
+@pytest.mark.timeout(15)
+def test_type_mode_button_command_toggles_pause():
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=RecLink(), calib=linear_calib(),
+                                        agent=FakeAgent())
+        texts = _spy_texts(app)
+        await app.run(lines=["/button", "how chunky should it be", "/button"])
+        return app, texts
+
+    app, texts = asyncio.run(go())
+    assert app.state.session == "active"
+    assert texts and texts[0].startswith("[session resumed after")    # the button's welcome back (a background turn)
+
+
+@pytest.mark.timeout(15)
+def test_timers_are_announced_through_the_speech_queue(capsys):
+    async def go():
+        app = await app_main.App.create(args(), frames=FakeFrames(), link=RecLink(), calib=linear_calib(),
+                                        agent=FakeAgent())
+        app.speech = app_main.TypedSpeech(app)
+        app._start_timers()
+        app.timers.set(1, "tea")
+        await asyncio.sleep(1.6)
+        await app.shutdown()
+        return app
+
+    app = asyncio.run(go())
+    assert "[coach:reply] Time's up for the tea." in capsys.readouterr().out
+    assert not app.state.timers and any(e.text == "timer done: tea" for e in app.state.events)
+
+
+@pytest.mark.timeout(20)
+def test_real_agent_tools_reach_timers_and_the_session_in_type_mode():
+    """The real Agent (scripted client): set_timer and pause_session reach main's Timers and Session."""
+    from test_agent import FakeClient, FakeStream, text, tool
+
+    async def go():
+        a = app_main.parse_args(["--type", "--no-yolo", "--no-s3", "--cam", "black", "--no-dashboard", "--no-checkins"])
+        app = await app_main.App.create(a, frames=FakeFrames(), link=RecLink(), calib=linear_calib())
+        app.agent.client = FakeClient(
+            FakeStream([text("Timer set for one minute. "), tool("t1", "set_timer", {"seconds": 60, "label": "onions"})],
+                       "tool_use"),
+            FakeStream([text("Sure, I'll wait for you. "), tool("t2", "pause_session", {})], "tool_use"),
+            FakeStream([text("Welcome back, you're on step one. ")]))
+        await app.run(lines=["set a one minute timer for the onions", "I have to take a call", "I'm back"])
+        return app
+
+    app = asyncio.run(go())
+    reqs = app.agent.client.requests
+    assert len(reqs) == 3 and app.state.session == "active"
+    assert re.search(r"timers: onions (1:00|0:5\d) left", reqs[1]["messages"][-1]["content"][-1]["text"])
+    last = reqs[2]["messages"][-1]["content"]
+    assert last[0] == {"type": "tool_result", "tool_use_id": "t2",
+                       "content": "ok: paused; you stay quiet until they say they're back"}
+    assert "[session resumed after" in last[-1]["text"] and "User: I'm back" in last[-1]["text"]

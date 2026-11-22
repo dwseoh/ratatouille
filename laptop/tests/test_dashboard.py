@@ -279,3 +279,22 @@ def test_the_laser_target_is_much_more_visible_than_the_other_boxes():
     assert lit(aimed, (100, 100, 200, 200)) > 3 * lit(plain, (100, 100, 200, 200))             # thick box + big label
     assert (aimed[100:200, 100:200, 1] == 200).any() and not (aimed[100:200, 100:200, 2] == 200).any()   # green, not red
     assert lit(aimed, (300, 100, 400, 200)) == lit(plain, (300, 100, 400, 200))                # others unchanged
+
+
+def test_snapshot_shows_pause_timers_cook_notes_and_servings():
+    import time
+    st = fake_state()
+    snap = dashboard.snapshot(st, FakeFrames(), Link(), Agent())
+    assert snap["paused"] is False and snap["timers"] == [] and snap["cook_notes"] == [] and snap["servings"] == 2
+    st.session, st.paused_at = "paused", time.monotonic() - 65
+    st.timers.update(onions=time.monotonic() + 252, rice=time.monotonic() + 30)
+    st.cook_notes.append("no cilantro")
+    st.servings = 4
+    snap = dashboard.snapshot(st, FakeFrames(), Link(), Agent())
+    assert snap["session"] == "paused" and snap["paused"] is True and 64 <= snap["paused_for_s"] <= 66
+    assert [t["label"] for t in snap["timers"]] == ["rice", "onions"] and 250 <= snap["timers"][1]["left_s"] <= 252
+    assert snap["cook_notes"] == ["no cilantro"] and snap["servings"] == 4
+
+
+def test_page_shows_the_paused_state():
+    assert "PAUSED" in dashboard.PAGE and 'id="extras"' in dashboard.PAGE

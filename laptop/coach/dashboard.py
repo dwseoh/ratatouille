@@ -6,7 +6,8 @@
 
 Panels: live video, current step (big), captions of what the coach just said (large, high contrast: also an
 accessibility feature), live transcript, speaking indicator, event log (incl. fallbacks and push-backs),
-latency bars for the last turn, link status (camera, S3, battery).
+latency bars for the last turn, link status (camera, S3, battery), session (cooking / PAUSED), running timers,
+the agent's cook notes and servings.
 
     task = asyncio.create_task(serve(build_app(state, frames, link, agent), cfg.dashboard_port))
 """
@@ -70,8 +71,16 @@ def snapshot(state, frames=None, link=None, agent=None, captions=None, recipes_r
     shown = state.image_step                                   # the step whose picture is up (usually the current one)
     photo = step_image_path(state.recipe, shown, recipes_root)
     version = f"?v={int(photo.stat().st_mtime)}" if photo else ""
+    now = time.monotonic()
     return {
         "session": state.session,
+        "paused": state.session == "paused",
+        "paused_for_s": round(now - state.paused_at) if state.paused_at is not None else 0,
+        "timers": [{"label": n, "left_s": max(0, round(due - now))}
+                   for n, due in sorted(state.timers.items(), key=lambda kv: kv[1])],
+        "cook_notes": list(state.cook_notes),
+        "servings": state.servings or state.recipe.servings,
+        "step_seconds": round(state.step_seconds()),
         "step": {"n": state.step + 1, "total": len(state.recipe.steps), "short": step.short, "goal": step.goal,
                  "how": list(step.how), "tips": list(step.tips),
                  "image_url": f"/recipe-image/{shown}{version}",      # always set: photo, else the dish photo, else a card

@@ -96,7 +96,7 @@ _DASHBOARD = r"""<!doctype html>
       <div class="qrrow"><img id="qr" alt="QR code that opens the step-by-step page" hidden><div id="cookurl">…</div></div></div>
   </section>
   <section>
-    <div class="panel"><h2>Step</h2><div id="step">-</div><div id="goal"></div></div>
+    <div class="panel"><h2>Step</h2><div id="step">-</div><div id="goal"></div><div id="extras" style="margin-top:8px;color:var(--dim)"></div></div>
     <div class="panel"><h2>You said</h2><div id="transcript"></div>
       <div style="margin-top:8px"><span class="dot" id="spk"></span><span id="spkl">quiet</span></div></div>
     <div class="panel" id="captions"><h2>Remy says</h2><div id="cap"></div></div>
@@ -112,7 +112,13 @@ async function tick() {
   try {
     const s = await (await fetch("/state", {cache:"no-store"})).json();
     $("conn").textContent = "live"; $("conn").className = "pill ok";
-    $("session").textContent = s.session === "active" ? "cooking" : "waiting for “hey Remy”";
+    $("session").textContent = s.session === "active" ? "cooking" : s.session === "paused"
+      ? "PAUSED " + Math.floor(s.paused_for_s / 60) + ":" + String(s.paused_for_s % 60).padStart(2, "0") + " · say “I'm back”"
+      : "waiting for “hey Remy”";
+    $("session").className = "pill" + (s.session === "paused" ? " bad" : "");
+    const extra = (s.timers || []).map(t => "⏱ " + t.label + " " + Math.floor(t.left_s / 60) + ":" + String(t.left_s % 60).padStart(2, "0"))
+      .concat((s.cook_notes || []).map(n => "📝 " + n));
+    $("extras").textContent = extra.join("  ·  ");
     flag($("cam"), s.links.camera, "camera"); flag($("s3"), s.links.s3, "S3");
     if (s.links.camera_ignored) { $("cam").textContent = "camera ignored"; $("cam").className = "pill"; }
     $("bat").textContent = s.links.vbat_mv ? "battery " + (s.links.vbat_mv/1000).toFixed(2) + " V" : "";

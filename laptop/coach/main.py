@@ -6,8 +6,10 @@
     python -m coach.main --no-s3                             # in-process FakeLink, no UDP at all
     python -m coach.main --no-yolo                           # fixed fake detections instead of YOLO
     python -m coach.main --type                              # type instead of talking (no mic/Pipecat/Deepgram)
+                                                             #   ("pause", "I'm back", "/button" = a BOOT press)
     python -m coach.main --fake-agent                        # echo agent, no Anthropic key needed
     python -m coach.main --closed-loop                       # stretch: dot finder + closed-loop correction
+    python -m coach.main --button                            # BOOT button: start / pause / resume
     python -m coach.main --no-checkins --no-dashboard        # leave out C's check-ins / the dashboard server
 
 Who does what at runtime:
@@ -18,8 +20,9 @@ Who does what at runtime:
     voice        (B, Pipecat) -> intents (fast point/done/stop) + agent turns (C) -> TTS
     Watcher      (C, loop 3)  -> event log, "looks done, next step?" asks (voice mode only)
     CheckIns     (C)          -> the coach speaks up on its own: step intros + a comment after a quiet spell
+    Timers       (C)          -> the agent's set_timer: "time's up" through the speech queue when it's quiet
     Dashboard    (C)          -> http://<laptop>:8000: live feed, step, captions, event log, latency (judges)
-    Session      (B)          -> "hey Remy" starts, "start over" resets
+    Session      (B)          -> "hey Remy" starts, "pause" / "I'm back" pause and resume, "start over" resets
 Nothing here blocks the event loop: YOLO and frames each run in their own thread.
 """
 from __future__ import annotations
@@ -34,6 +37,7 @@ from .aim import Aimer, Calibration
 from .captions import CaptionTimeline
 from .config import CONFIG as cfg
 from .telemetry import LatencyLog
+from .timers import Timers
 from .contracts import (
     LAT_FIRST_AUDIO,
     TFT_LATENCY,
@@ -73,11 +77,12 @@ def make_steps(state: State, link=None):
         return FakeSteps(state)
 
 
-def make_agent(state: State, aimer, steps, link, fake: bool):
+def make_agent(state: State, aimer, steps, link, fake: bool, *, timers=None, session=None):
+    """`session`: the Session or a callable returning it (it only exists once speech does)."""
     if fake:
         return FakeAgent()
     from .agent import Agent, make_handlers   # needs the anthropic package + ANTHROPIC_API_KEY
-    return Agent(cfg, state, make_handlers(state, aimer, steps, link))
+    return Agent(cfg, state, make_handlers(state, aimer, steps, link, timers=timers, session=session))
 
 
 async def make_link(args):
@@ -126,18 +131,68 @@ async def health_loop(frames, link, calib) -> None:
             was = now
 
 
+class TypedSpeech(FakeSpeech):
+    """--type: prints each sentence (or speaks it with --say), and runs the agent turns the app starts on its own
+    (check-ins, the welcome back after a BOOT-button resume) in the background, like the voice pipeline does.
+    Typing while one runs cancels it first (barge-in)."""
+
+    def __init__(self, app: "App", say_aloud: bool = False):
+        super().__init__(say_aloud=say_aloud)
+        self._app, self._task = app, None
+
+    async def chime(self, kind: str) -> None:
+        print(f"  [chime: {kind}]", flush=True)
+
+    async def interrupt(self) -> None:
+        self.stop()
+        await self.cancel_turn()
+
+    async def cancel_turn(self) -> None:
+        task, self._task = self._task, None
+        if task is not None and not task.done():
+            self._app.agent.cancel()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def agent_turn(self, text: str) -> None:
+        await self.cancel_turn()
+        frames = self._app.frames
+        recent = frames.recent(cfg.frames_per_turn) if getattr(frames, "connected", True) else []
+        self._task = asyncio.create_task(self._app.agent.turn(text, recent, self.say))
+
+
+def _status(state: State) -> str:
+    """One line after each typed turn: what the agent's state note is built from."""
+    from .timers import describe
+    bits = [state.note()]
+    if state.session != "active":
+        bits.append(f"session: {state.session}")
+    if state.timers:
+        bits.append(f"timers: {describe(state)}")
+    if state.cook_notes:
+        bits.append(f"cook notes: {'; '.join(state.cook_notes)}")
+    if state.servings:
+        bits.append(f"servings: {state.servings}")
+    return " | ".join(bits)
+
+
 async def type_loop(app: "App", lines=None) -> None:
     """--type: keyboard instead of the voice pipeline. Same fast intents, then an agent turn.
     `lines` (a list) is for tests; otherwise reads stdin until an empty line / Ctrl-D."""
-    from .intents import IntentRouter      # B's router, as in voice mode (strict STOP, fuzzy names)
+    from .contracts import Intent
+    from .intents import IntentRouter, allowed_while_paused   # B's router, as in voice mode (strict STOP, fuzzy names)
     router = IntentRouter(app.state.recipe, use_embeddings=not lines)   # tests (lines=...) skip the model
     it = iter(lines) if lines is not None else None
-    app.state.session = "active"
+    if app.state.session == "idle":
+        app.state.session = "active"        # typing mode needs no wake phrase (a pause survives a re-entry)
+    session = app.session                   # None when a test drives type_loop on its own: no pause then
     if it is None:
         await asyncio.sleep(1.5)      # let the startup log lines finish, so the prompt below is the LAST thing shown
         print("\n" + "=" * 64 + "\n  TYPING MODE: click this terminal, type a line, press Enter.\n"
               "  Log lines may appear in between: ignore them and keep typing.\n"
-              "  Empty line (just Enter) or Ctrl-D quits.\n" + "=" * 64, flush=True)
+              "  Try: where's the lime / set a timer for 1 minute / go back a step / pause / I'm back\n"
+              "  /button = a BOOT press (start, pause, resume). Empty line (just Enter) or Ctrl-D quits.\n"
+              + "=" * 64, flush=True)
     while True:
         if it is not None:
             text = next(it, "")
@@ -148,8 +203,32 @@ async def type_loop(app: "App", lines=None) -> None:
                 text = ""
         if not text:
             return
+        if text == "/button":
+            app.button_pressed()
+            await asyncio.sleep(0.05)
+            print(f"  [button] session: {app.state.session}")
+            continue
         app.state.transcript, app.state.last_activity = text, time.monotonic()   # typing = speaking, for check-ins
+        if hasattr(app.speech, "cancel_turn"):
+            await app.speech.cancel_turn()  # typing over a check-in = barge-in
+        agent_text = text
+        if app.state.session == "paused":   # only "I'm back" / "hey Remy", "start over" and safety get through
+            if session is not None and await session.heard(text):
+                agent_text = session.first_turn(text)
+                print("  [session] resumed")
+            elif not allowed_while_paused(text):
+                print("  [paused] ignored. Type \"I'm back\" (or \"resume\") to carry on.")
+                continue
         r = router.classify(text)
+        if app.state.session == "paused" and r.intent is not Intent.START_OVER:
+            r = router.classify("")         # paused safety question: no pointing, no step changes
+        if r.intent is Intent.PAUSE:
+            if session is not None:
+                await session.pause(f"typed {text!r}")
+            else:
+                app.aimer.laser_off()
+            print(f"  [intent] pause -> session: {app.state.session}")
+            continue
         if r.intent.value == "point" and r.obj:
             print(f"  [intent] point_at({r.obj}) -> {app.aimer.point_at(r.obj)}")
         elif r.intent.value == "done":
@@ -158,6 +237,8 @@ async def type_loop(app: "App", lines=None) -> None:
                 app.aimer.laser_off()            # the target belonged to the step that just ended
             print(f"  [intent] done -> {verdict}")
         elif r.intent.value == "start_over":
+            if session is not None:
+                session.resume_now("start over")    # typing mode stays active: just un-pause
             app.aimer.laser_off(); app.steps.reset(); app.link.reset()
             print("  [intent] start over")
             continue
@@ -167,10 +248,13 @@ async def type_loop(app: "App", lines=None) -> None:
             continue
         # camera down: no frames at all (the agent then tells the user once), never stale ones
         frames = app.frames.recent(cfg.frames_per_turn) if getattr(app.frames, "connected", True) else []
-        stats = await app.agent.turn(text, frames, app.speech.say)
+        stats = await app.agent.turn(agent_text, frames, app.speech.say)
         app.state.last_activity = time.monotonic()
         ttft = f"{stats.ttft_s:.2f}s" if stats.ttft_s is not None else "n/a"
-        print(f"  ttft {ttft} | tools: {', '.join(stats.tools) or 'none'} | {app.state.note()}")
+        u = getattr(app.agent, "last_usage", None)       # prompt cache check: "read" should cover all but the new turn
+        cache = (f" | cache read {getattr(u, 'cache_read_input_tokens', 0)} / write "
+                 f"{getattr(u, 'cache_creation_input_tokens', 0)} / uncached {getattr(u, 'input_tokens', 0)}") if u else ""
+        print(f"  ttft {ttft} | tools: {', '.join(stats.tools) or 'none'}{cache} | {_status(app.state)}")
 
 
 # ───────────────────────── the app ─────────────────────────
@@ -187,6 +271,7 @@ class App:
         self.detector = None          # vision.DetectorThread when YOLO is on
         self.latency_log = LatencyLog(state, meta={"model": cfg.model, "fast": cfg.fast})   # logs/latency.jsonl
         self.captions = CaptionTimeline()       # voice mode: the dashboard caption follows the voice, one sentence at a time
+        self.timers = Timers(state, link)       # the agent's set_timer; announced once speech exists (_start_timers)
         self._tasks: list[asyncio.Task] = []
 
     @classmethod
@@ -201,8 +286,11 @@ class App:
         steps = make_steps(state, link)
         if isinstance(steps, FakeSteps):
             steps.on_change(lambda n: link.show_text(TFT_STEP, f"Step {n + 1}: {recipe.steps[n].short}"))
-        agent = agent if agent is not None else make_agent(state, aimer, steps, link, args.fake_agent)
-        return cls(args, state, frames, link, calib, aimer, steps, agent)
+        app = cls(args, state, frames, link, calib, aimer, steps, agent)
+        if agent is None:                       # the pause tool needs the Session, which is built later
+            app.agent = make_agent(state, aimer, steps, link, args.fake_agent, timers=app.timers,
+                                   session=lambda: app.session)
+        return app
 
     def _spawn(self, coro, name: str) -> None:
         self._tasks.append(asyncio.create_task(coro, name=name))
@@ -237,6 +325,12 @@ class App:
             self.agent.checkins = self.checkins            # lets "talk less" / "talk more" change its level
         self._spawn(self.checkins.run(), "checkins")
 
+    def _start_timers(self) -> None:
+        """Timers announce through the speech queue, only when nobody is talking and no agent turn runs."""
+        st = self.state
+        quiet = lambda: not st.user_talking and not st.speaking and not getattr(self.agent, "busy", False)  # noqa: E731
+        self._spawn(self.timers.run(self.speech.say, quiet), "timers")
+
     def _start_dashboard(self) -> None:
         """C's dashboard on 0.0.0.0:DASHBOARD_PORT. Never takes the app down (missing package, port in use)."""
         if self.args.no_dashboard:
@@ -256,14 +350,19 @@ class App:
                 log.error("dashboard could not start on port %d (already in use?)", cfg.dashboard_port)
         self._spawn(serve(), "dashboard")
 
+    def button_pressed(self) -> None:
+        """BOOT (--button), or "/button" in typing mode: start when idle, pause when active, resume when paused.
+        ("Start over" by voice still resets.)"""
+        if self.session is None:
+            return
+        s = self.state.session
+        coro = (self.session.start() if s == "idle" else self.session.pause("BOOT button") if s == "active"
+                else self.session.resume("BOOT button", greet=True))
+        asyncio.get_running_loop().create_task(coro)
+
     def _wire_button(self) -> None:
-        """--button: BOOT press starts the session when idle, resets it when active (backup for the wake phrase)."""
-        def pressed():
-            if self.session is None:
-                return
-            coro = self.session.start() if self.state.session == "idle" else self.session.reset()
-            asyncio.get_running_loop().create_task(coro)
-        self.link.on_button(pressed)
+        """--button: the BOOT button starts, pauses and resumes (backup for the wake phrase and "pause")."""
+        self.link.on_button(self.button_pressed)
 
     async def run(self, lines=None) -> None:
         self._spawn(self.aimer.run(), "aimer")
@@ -279,9 +378,14 @@ class App:
         try:
             await self.agent.prewarm()
             if self.args.type:
-                self.speech = FakeSpeech(say_aloud=self.args.say)
+                from .session import Session
+                self.speech = TypedSpeech(self, say_aloud=self.args.say)
+                self.session = Session(self.state, self.speech, self.agent, self.aimer, self.steps, self.link)
                 self.link.show_text(TFT_STATUS, "typing mode")
                 self._start_checkins()
+                self._start_timers()
+                if self.args.button:
+                    self._wire_button()
                 await type_loop(self, lines)
             else:
                 await self._run_voice()
@@ -303,9 +407,11 @@ class App:
         if not self.args.no_watcher and not self.args.fake_agent:
             self._start_watcher()
         self._start_checkins()
+        self._start_timers()
         if self.args.button:
             self._wire_button()
-        print('\n>>> say "hey Remy" to start, "start over" to reset\n', flush=True)
+        print('\n>>> say "hey Remy" to start, "pause" / "I\'m back" to pause and resume, "start over" to reset\n',
+              flush=True)
         runner = WorkerRunner()
         await runner.add_workers(worker)
         await runner.run()
@@ -340,7 +446,7 @@ def parse_args(argv=None):
     ap.add_argument("--type", action="store_true", help="type instead of talking")
     ap.add_argument("--say", action="store_true", help="with --type: speak replies with macOS `say`")
     ap.add_argument("--fake-agent", action="store_true", help="echo agent, no API key needed")
-    ap.add_argument("--button", action="store_true", help="BOOT button starts/resets the session")
+    ap.add_argument("--button", action="store_true", help="BOOT button starts / pauses / resumes the session")
     ap.add_argument("--no-watcher", action="store_true", help="don't run C's watcher (loop 3)")
     ap.add_argument("--no-checkins", action="store_true", help="the coach never speaks unprompted")
     ap.add_argument("--no-dashboard", action="store_true", help="don't start the dashboard web server")
