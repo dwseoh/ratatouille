@@ -14,7 +14,7 @@ up from here **after a full guacamole run works**. Newest at the top of each sec
 | **Background watcher** (vision checks steps every few seconds, push-back like "the pit's still in", event log) | Stretch. Replaced by **check-ins** (task B3a) | It's the biggest source of complexity: a second model, a loop and timing rules. Check-ins give the "talks on its own" feel by reusing the agent. | Task B3 in task-specs.md. Needs the event log (C10) + `Steps.propose_done("vision")`. ~half a day. |
 | **Priority speech queue** (safety interrupts, drop stale comments, queue order) | Later | Check-ins only fire when it's quiet, so nothing competes yet. | Callers already use `say(text, priority)`. Add the rules inside `say()`. ~1 h, no one else's code changes. |
 | **Offline mode** (demo with WiFi off) | Cut | The camera needs the hotspot anyway. We keep "API slow → speak the step's `fallback` line" + a backup video. | Local STT/TTS + canned lines. Not worth it. |
-| **Timers** (`set_timer` tool) | Cut | Guacamole has nothing to time. | Tool + countdown + spoken reminder through `say()`. ~1-2 h. |
+| **Timers** (`set_timer` tool) | **Built** (`coach/timers.py`, see docs/agent-notes.md) | Was cut because guacamole has nothing to time; imported recipes and "give me 5 minutes" do. | n/a |
 | **QNX RTOS** | Not doing (unless there's a QNX prize) | Doesn't help latency (our delays are network/cloud). Needs a Raspberry Pi, a box redesign and a new toolchain. | Pi + QNX replaces the S3 as the controller with the same UDP protocol. ~1 day. |
 | **Video model like V-JEPA ("jev")** | Not doing | Too heavy for 48 h. YOLO + Claude cover what we need. | n/a |
 

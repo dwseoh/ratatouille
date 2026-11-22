@@ -50,7 +50,8 @@ latest frame ─▶ YOLO-World (target box) ─┐
 ```
 mic ─▶ VAD + streaming STT ─▶ (point-first keyword match ─▶ loop 1 immediately)
                           └─▶ Claude (streamed) ─▶ sentence splitter ─▶ streaming TTS ─▶ speaker
-                                    └─ tool calls: point_at / next_step / set_timer / show_text
+                                    └─ tool calls: point_at / propose_done / go_to_step / set_timer / pause_session / ...
+                                       (full list + context per turn: docs/agent-notes.md)
 ```
 
 ### Latency budget (end of speech → first audible word)
