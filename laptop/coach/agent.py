@@ -1,28 +1,39 @@
 """Claude agent for voice turns (contract C6): streams text sentence by sentence, calls local tools.
 
-Latency notes (see docs/architecture.md):
-- the system prompt + recipe + tool list are a stable, cached prefix (`prewarm()` warms it at startup)
-- only 2-3 small frames per turn; frames are dropped from history as soon as the turn ends
+Latency notes (see docs/architecture.md, docs/agent-notes.md):
+- the system prompt + recipe (numbered text, context.render_recipe) + tool list are a stable, cached prefix
+  (`prewarm()` warms it at startup)
+- a second cache breakpoint sits on the last block of the kept history, so each turn reads the whole earlier
+  conversation from the cache; only the new user message (frames + the [state ...] note) is uncached
+- only 2-3 small frames per turn; frames are dropped from history as soon as the turn ends (that's why the history
+  breakpoint is on the previous reply, before the image-bearing message)
 - tools run the moment their input is complete (mid-stream); their results ride along with the NEXT
-  user turn, so a tool never costs a second round trip
+  user turn, so a tool never costs a second round trip. Hence no "lookup" tools: everything the model needs to
+  answer (recipe, positions, timers, notes) is already in the prompt.
 - barge-in: `cancel()` aborts the HTTP stream; sentences not yet handed to TTS are discarded
 - fallbacks (B5): no first token in FIRST_TOKEN_TIMEOUT_S -> retry ONCE on the backup model (Haiku, BACKUP_MODEL,
   with its own shorter deadline); still nothing, or an API error, a refusal or missing credentials -> speak the
   step's canned `fallback` line (once per step; after that "Sorry, give me a second."), set `TurnStats.error`
   and log a system event. No camera frames -> the state note says "camera offline".
 
+Context per turn (context.state_note): step + time on it (pauses excluded) + next step, visible objects with
+left/centre/right, near/far and in/on/next to the bowl or board, what this step needs that isn't in view, the laser
+and whether it's on target, timers, servings, cook notes (`remember`), recent events with ages, what the cook said
+that has scrolled out of the history, "cook may be stuck", PAUSED.
+
 History rules (the Messages API is strict about these):
 - every tool_use must be answered by a tool_result in the very next user message -> results are kept in
   `_pending` until then, and cancelled/failed turns still commit the tools they already ran
-- history is trimmed to the current recipe step + the last KEEP_TURNS turns; trimming only drops from the
-  FRONT, never edits the middle, and thinking blocks are never replayed (they can't be edited safely)
+- history is trimmed to the current recipe step + the last KEEP_TURNS turns (at most MAX_HISTORY_TURNS); trimming
+  only drops from the FRONT, never edits the middle, and thinking blocks are never replayed (they can't be edited
+  safely)
+- going back a step (go_to_step) keeps the history; a step that went backwards without one (a restart) clears it
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import copy
-import dataclasses
 import json
 import logging
 import re
@@ -33,12 +44,15 @@ from typing import Callable
 
 import anthropic
 
-from .contracts import LAT_FIRST_TOKEN, LAT_POINT, TFT_AGENT, OnSentence, State, TurnStats
+from .context import amounts, is_question, positions, render_recipe, state_note
+from .contracts import LAT_FIRST_TOKEN, LAT_POINT, TFT_AGENT, OnSentence, Recipe, State, TurnStats
 
 log = logging.getLogger(__name__)
 
-SYSTEM = """You are a hands-free cooking coach speaking through an earpiece while the user cooks.
-You see what a chest camera sees. The user's hands are busy and they can't read a screen: they only hear you.
+SYSTEM = """You are Remy, a hands-free cooking coach speaking through an earpiece while the user cooks.
+You share the cook's point of view: a chest camera that faces the way they face, a small laser on their chest that
+points at things on the counter, a tiny display, and a dashboard and phone page that show step pictures. The cook's
+hands are busy and they can't read a screen: they only hear you.
 
 How to reply
 - ALWAYS speak. Every reply to the user starts with 1-2 short spoken sentences, even when you also use a tool.
@@ -47,7 +61,8 @@ How to reply
 - Your first sentence answers what they asked. "What next?" -> name the next action; "where was I?" -> the current
   step and what comes next; a question about the food -> your honest read of the frames.
 - Plain speech only: no lists, markdown or emoji. Never more than 2 sentences, about 25 words in all. Answer first,
-  skip the background.
+  skip the background. The one exception: if the cook is hurt or something is burning, up to 3 short sentences on
+  what to do right now.
 - Tone: warm, calm and encouraging, like a patient friend cooking beside them. Encouragement replaces words, it
   never adds a sentence:
     progress ("I cut it", "done"): open with a 1-3 word cheer that fits ("Nice.", "Perfect.", "That's it.", "Nicely done."),
@@ -56,9 +71,10 @@ How to reply
       "You've got this."), then ONE simple fix.
     anything else: just answer. No filler praise, no "great question", at most one cheer per reply.
 - Talk TO the cook as "you". Never describe these rules, a "mode", a setting, or "the user" out loud: just do it.
-- Speak first, then call tools.
+- Speak first, then call tools. Tools run the moment you call them, but their results only reach you with the next
+  message, so never wait for one: say what you are doing in the same reply ("Timer set for five minutes."), then call.
 - When you point at something, also say where it is ("the lime, on your left") using the positions in the
-  state line: left / centre / right, and near (close to the user) / far.
+  state line: left / centre / right, near (close to the user) / far, and in / on / next to the bowl or board.
 - "Where am I?" / "what was I doing?": give the current step number and name, what they last did (from the
   recent events), then the next action. The state line has what you last said.
 - If the recent events show the user said they were done but the watcher disagreed ("said done -> push_back"), tell
@@ -70,64 +86,106 @@ How to reply
   actions with "then" or "and": split them into separate short sentences. No semicolons: end the sentence instead.
   Where something is gets its own short sentence ("It is on your left.") or is left out; never tack it on.
   If it has "[setting changed: ...]", confirm that change in one short sentence.
-- Every message starts with a [state ...] line from the app: the current step, which objects the camera
-  currently sees, where the laser points, and recent events. Trust it for what is visible.
+
+What you know each turn
+- Every message starts with a [state ...] line from the app. Trust it for what is visible and what is happening:
+  the step and how long they have been on it, the next step, what the camera currently sees and where, objects
+  this step needs that aren't in view, where the laser points, timers, servings, cook notes, recent events (with
+  how long ago), things the cook said earlier in the session, what you last said, and "cook may be stuck".
+- The full recipe is at the end of these instructions: step numbers, amounts and substitutes. Name steps by their
+  number and short name ("step 4, dice onion").
+- "cook notes" hold for the whole session (a swap, a missing ingredient, an allergy, a taste): follow them in
+  every step. No cilantro means skip it and don't point at it.
+- "needed now, not in view: knife": if they need it right now, say you can't see it and ask them to put it in view.
+- "cook may be stuck": offer one concrete tip for the hard part, or ask what's tricky. Once, not every turn.
 
 Tools
 - point_at(name): shine the laser on an object. Only call it for objects the state line says are visible.
   If the user asks about something that isn't visible, say you can't see it instead of pointing.
+- point_sequence(names): show several visible objects one after another ("what do I need?", "show me everything
+  for this step"), in the order you name them.
 - laser_off(): turn the laser off.
 - propose_done(): call it when the user says they are finished with the step, or says yes after you asked
   whether they're ready to move on. Trust them. Never decide a step is finished from the camera alone: if the
   frames clearly show it is done, just ask once "ready for the next step?" and wait for their answer.
+- go_to_step(step): "go back", "previous step", "back to the onion step", "skip this one". step is the recipe step
+  number (1 = first). Say which step they're on now and its first action.
+- set_timer(seconds, label) / cancel_timer(label): when they ask for a timer, or something needs to rest or cook
+  for a while. The app says when it's done, even while paused. cancel_timer with an empty label cancels all.
+- remember(fact): the cook tells you something that should hold for the rest of the session: a swap ("using lemon
+  instead of lime"), something they don't have or don't like, an allergy. One short fact per call.
+- set_servings(servings): they want to make more or less ("for six people", "half the amount"). Work out the new
+  amounts from the recipe for this answer; the state line lists them from the next turn on.
+- pause_session(): they have to step away ("I need to get the door", "let me take this call"). Say you'll wait
+  and that they can say "I'm back". While the state line says PAUSED, call resume_session() if they want to carry on.
 - show_text(text): up to 20 characters on the wearable's display.
 - show_image(step): put a recipe step's picture on the dashboard and phone ("show me the onion step", "what should
   it look like?"). step is that step's number from the recipe (1 = first); 0 goes back to the current step. A picture
   is always showing already, so only call it when the user asks to see another step. Say what you put up in a few words.
 If a tool result says not_visible or error, you may mention it briefly on your next turn.
+
+Cooking help
+- Amounts and swaps come from the recipe. If they lack an ingredient, offer its listed substitute or say it can be
+  left out, then remember the choice.
+- Safety comes first: mention the claw grip or keeping food flat on the board when cutting starts. If they are hurt
+  or something is burning, say the single most useful thing to do now (cool running water on a burn, press a clean
+  cloth on a cut and stop cooking if it's deep).
+
+Camera
 If the state line says the camera is offline, you can't see anything: tell the user once, briefly, then carry on
 from the recipe and what they tell you. Never guess what is on the counter.
 If it says the camera is IGNORED, the user asked you not to use it: never mention the camera again, never ask them
 to move or uncover it, and don't comment on what you can or can't see. Go by the recipe and what they tell you.
 
 If a message starts with [check-in, the app is asking whether to speak up unprompted: say one short
-helpful sentence, or reply with just SKIP when there is nothing worth saying."""
+helpful sentence, or reply with just SKIP when there is nothing worth saying.
+If a message starts with [session resumed, the cook just came back from a pause: welcome them back in a few words,
+then the step they're on and the next action."""
+
+
+def _tool(name: str, description: str, properties: dict | None = None) -> dict:
+    """A client tool: every property required, nothing extra allowed (validate_tool_input enforces it, because eager
+    input streaming means the API doesn't)."""
+    props = properties or {}
+    return {"name": name, "description": description, "eager_input_streaming": True,
+            "input_schema": {"type": "object", "properties": props, "required": list(props),
+                             "additionalProperties": False}}
+
 
 TOOLS = [
-    {
-        "name": "point_at",
-        "description": "Point the laser at a visible object. name must be one of the recipe objects.",
-        "eager_input_streaming": True,
-        "input_schema": {"type": "object", "properties": {"name": {"type": "string"}},
-                         "required": ["name"], "additionalProperties": False},
-    },
-    {
-        "name": "laser_off",
-        "description": "Turn the laser off.",
-        "eager_input_streaming": True,
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "propose_done",
-        "description": "Say the current recipe step looks finished. The app verifies it and advances if appropriate.",
-        "eager_input_streaming": True,
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "show_image",
-        "description": "Show the picture of recipe step N (1 = first step) on the dashboard and phone; 0 = back to the "
-                       "current step. Use when the user asks to see a step or what it should look like.",
-        "eager_input_streaming": True,
-        "input_schema": {"type": "object", "properties": {"step": {"type": "integer"}},
-                         "required": ["step"], "additionalProperties": False},
-    },
-    {
-        "name": "show_text",
-        "description": "Show a short status line (max 20 chars) on the wearable's display.",
-        "eager_input_streaming": True,
-        "input_schema": {"type": "object", "properties": {"text": {"type": "string"}},
-                         "required": ["text"], "additionalProperties": False},
-    },
+    _tool("point_at", "Point the laser at one visible object. name must be one of the recipe objects the state line "
+          "lists as visible. Say where it is as you point.",
+          {"name": {"type": "string", "description": "recipe object name, e.g. \"lime\""}}),
+    _tool("laser_off", "Turn the laser off."),
+    _tool("propose_done", "Say the current recipe step looks finished. The app verifies it and advances if appropriate."),
+    _tool("show_image", "Show the picture of recipe step N (1 = first step) on the dashboard and phone; 0 = back to the "
+          "current step. Use when the user asks to see a step or what it should look like.",
+          {"step": {"type": "integer"}}),
+    _tool("show_text", "Show a short status line (max 20 chars) on the wearable's display.",
+          {"text": {"type": "string"}}),
+    _tool("point_sequence", "Show several visible objects one after another with the laser, about 2 seconds each "
+          "(\"what do I need for this step?\"). The laser stays on the last one. Use point_at for a single object.",
+          {"names": {"type": "array", "items": {"type": "string"},
+                     "description": "visible recipe object names, in the order you mention them"}}),
+    _tool("go_to_step", "Move to another recipe step: back (\"go back\", \"previous step\", \"back to the onion\") or "
+          "forward (\"skip this step\"). For \"I'm done\" use propose_done instead.",
+          {"step": {"type": "integer", "description": "recipe step number, 1 = first"}}),
+    _tool("set_timer", "Start a kitchen timer. The app announces when it's done (also while paused). Setting a label "
+          "that is already running restarts it.",
+          {"seconds": {"type": "integer", "description": "duration in seconds, e.g. 300 for five minutes"},
+           "label": {"type": "string", "description": "one or two words for what it's for, e.g. \"onions\"; \"\" if none"}}),
+    _tool("cancel_timer", "Cancel a running timer.",
+          {"label": {"type": "string", "description": "the timer's label; \"\" cancels all timers"}}),
+    _tool("remember", "Remember a fact about this cook for the rest of the session, e.g. \"using lemon instead of "
+          "lime\", \"no cilantro\", \"allergic to onion\", \"likes it spicy\". It appears in every state line as a cook note.",
+          {"fact": {"type": "string", "description": "one short fact, under 15 words"}}),
+    _tool("set_servings", "Scale the recipe to a number of servings (people). The state line then lists the amounts "
+          "for every ingredient. Use the recipe's own number to go back to the original amounts.",
+          {"servings": {"type": "integer"}}),
+    _tool("pause_session", "Pause the session because the cook has to step away: the coach stays quiet, the laser goes "
+          "off, the step is kept. They come back by saying \"I'm back\" or \"resume\"."),
+    _tool("resume_session", "Resume a paused session (only when the state line says PAUSED and the cook wants to "
+          "carry on)."),
 ]
 
 MAX_TOKENS = 4096          # deliberately short spoken replies; thinking tokens count against this
@@ -140,6 +198,10 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Models that accept server-side refusal fallbacks (Haiku 5.5 does not).
 FAST_MODE_MODELS = {"claude-opus-5-5", "claude-fable-5-2"}   # `speed="fast"` on any other model is a 400
 FALLBACK_MODELS = {"claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
+MAX_HISTORY_TURNS = 24     # hard cap, even inside one long step (keeps the uncached tail and the bill bounded)
+POINT_DWELL_S = 2.0        # point_sequence: how long the laser stays on each object
+MAX_COOK_NOTES = 8
+HEARD_EARLIER = 3          # "cook said earlier": at most this many utterances that fell out of the history
 
 
 # ───────────────────────── sentence splitter ─────────────────────────
@@ -189,7 +251,20 @@ class SentenceSplitter:
 # ───────────────────────── tools ─────────────────────────
 
 _SCHEMAS = {t["name"]: t["input_schema"] for t in TOOLS}
-_PY_TYPES = {"string": str, "integer": int}
+_PY_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list}
+
+
+def _type_problem(key: str, val, spec: dict) -> str | None:
+    want = _PY_TYPES.get(spec.get("type"))
+    if want is not None and (not isinstance(val, want) or (isinstance(val, bool) and spec.get("type") != "boolean")):
+        return f"{key!r} must be a{'n' if spec['type'][0] in 'aeiou' else ''} {spec['type']}"
+    if "enum" in spec and val not in spec["enum"]:
+        return f"{key!r} must be one of {spec['enum']}"
+    if spec.get("type") == "array" and "items" in spec:
+        for item in val:
+            if (problem := _type_problem(f"{key}[]", item, spec["items"])) is not None:
+                return problem
+    return None
 
 
 def validate_tool_input(name: str, inp) -> str | None:
@@ -207,23 +282,63 @@ def validate_tool_input(name: str, inp) -> str | None:
     for key, val in inp.items():
         if key not in props:
             return f"unexpected {key!r}"
-        want = _PY_TYPES.get(props[key].get("type"))
-        if want is not None and (not isinstance(val, want) or isinstance(val, bool)):
-            return f"{key!r} must be a {props[key]['type']}"
+        if (problem := _type_problem(key, val, props[key])) is not None:
+            return problem
     return None
 
 
-def make_handlers(state: State, aimer, steps, link) -> dict[str, Callable[..., str]]:
-    """Tool name -> callable(**input) -> result text. Built from the C3/C7/C1 interfaces."""
+def make_handlers(state: State, aimer, steps, link, *, timers=None, session=None) -> dict[str, Callable[..., str]]:
+    """Tool name -> callable(**input) -> short result text. Built from the C3/C7/C1 interfaces.
 
-    def point_at(name: str) -> str:
+    `timers` is a timers.Timers. `session` is the Session, or a zero-arg callable returning it (it is built after the
+    agent in voice mode). Without them those tools answer with an error the model can relay."""
+    recipe = state.recipe
+    seq: dict = {"task": None}          # the running point_sequence walk, if any
+
+    def _stop_sequence() -> None:
+        task, seq["task"] = seq["task"], None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _point(name: str) -> str:
         result = aimer.point_at(name)
         if state.turns:
             state.turns[-1].mark(LAT_POINT)
         state.log("agent", f"pointed at {name}" if result == "ok" else f"couldn't point at {name}: {result}")
         return result
 
+    def point_at(name: str) -> str:
+        _stop_sequence()
+        return _point(name)
+
+    async def _walk(names: list[str]) -> None:
+        for prev, nxt in zip(names, names[1:]):
+            await asyncio.sleep(POINT_DWELL_S)
+            if state.session != "active" or state.target != prev:
+                return                          # paused, stopped, or someone else moved the laser: stop the tour
+            _point(nxt)
+
+    def point_sequence(names: list[str]) -> str:
+        _stop_sequence()
+        names = [n for n in dict.fromkeys(" ".join(n.split()) for n in names) if n]
+        unknown = [n for n in names if n not in recipe.objects]
+        hidden = [n for n in names if n in recipe.objects and n not in state.visible()]
+        show = [n for n in names if n in recipe.objects and n in state.visible()]
+        notes = ([f"not visible: {', '.join(hidden)}"] if hidden else []) + (
+            [f"not recipe objects: {', '.join(unknown)}"] if unknown else [])
+        if not show:
+            aimer.laser_off()
+            return "not_visible" + (f" ({'; '.join(notes)})" if notes else "")
+        _point(show[0])
+        if len(show) > 1:
+            try:
+                seq["task"] = asyncio.get_running_loop().create_task(_walk(show))
+            except RuntimeError:                # no event loop (a plain unit test): just the first one
+                pass
+        return f"ok: showing {', '.join(show)}" + (f"; {'; '.join(notes)}" if notes else "")
+
     def laser_off() -> str:
+        _stop_sequence()
         aimer.laser_off()
         return "ok"
 
@@ -233,23 +348,85 @@ def make_handlers(state: State, aimer, steps, link) -> dict[str, Callable[..., s
         reason = getattr(steps, "reason", "")       # set by Steps on a push_back, e.g. "still whole avocados"
         return f"{verdict}: {reason}" if reason and verdict == "push_back" else verdict
 
+    def go_to_step(step: int) -> str:
+        total = len(recipe.steps)
+        if not 1 <= step <= total:
+            return f"error: there is no step {step}; the recipe has steps 1 to {total}"
+        go = getattr(steps, "go_to", None)
+        if go is None:
+            return "error: this step tracker can't jump between steps"
+        result = go(step - 1, "agent")
+        if result != "ok":
+            return result
+        _stop_sequence()
+        aimer.laser_off()                       # the target belonged to the old step
+        s = recipe.steps[step - 1]
+        return f"ok: now on step {step} ({s.short}): {s.goal}"
+
     def show_text(text: str) -> str:
         link.show_text(TFT_AGENT, text[:20])
         return "ok"
 
     def show_image(step: int) -> str:
-        total = len(state.recipe.steps)
+        total = len(recipe.steps)
         if step == 0:
             state.shown_image = None
             return "ok: showing the current step"
         if not 1 <= step <= total:
             return f"error: there is no step {step}; the recipe has steps 1 to {total}"
         state.shown_image = (step - 1, state.step)      # follows the cook again as soon as the step changes
-        state.log("agent", f"showed the picture for step {step} ({state.recipe.steps[step - 1].short})")
-        return f"ok: showing step {step}, {state.recipe.steps[step - 1].short}"
+        state.log("agent", f"showed the picture for step {step} ({recipe.steps[step - 1].short})")
+        return f"ok: showing step {step}, {recipe.steps[step - 1].short}"
+
+    def set_timer(seconds: int, label: str) -> str:
+        return timers.set(seconds, label) if timers is not None else "error: timers aren't available here"
+
+    def cancel_timer(label: str) -> str:
+        return timers.cancel(label) if timers is not None else "error: timers aren't available here"
+
+    def remember(fact: str) -> str:
+        fact = " ".join(fact.split()).rstrip(".")[:120]
+        if not fact:
+            return "error: nothing to remember"
+        notes = state.cook_notes
+        if fact.lower() in (n.lower() for n in notes):
+            return "ok: already noted"
+        notes.append(fact)
+        del notes[:-MAX_COOK_NOTES]                     # oldest out
+        state.log("agent", f"noted: {fact}")
+        return "ok: noted"
+
+    def set_servings(servings: int) -> str:
+        if not recipe.servings or not recipe.ingredients:
+            return "error: this recipe has no amounts to scale; estimate from the steps"
+        if not 1 <= servings <= 50:
+            return "error: servings must be between 1 and 50"
+        state.servings = 0 if servings == recipe.servings else servings
+        state.log("agent", f"servings set to {servings}")
+        return f"ok: amounts for {servings}: {amounts(recipe, servings)}"
+
+    def _session():
+        return session() if callable(session) else session
+
+    def pause_session() -> str:
+        sess = _session()
+        if sess is None or not hasattr(sess, "pause_now"):
+            return "error: pausing isn't available here"
+        _stop_sequence()
+        if sess.pause_now("agent"):
+            return "ok: paused; you stay quiet until they say they're back"
+        return f"not paused: the session is {state.session}"
+
+    def resume_session() -> str:
+        sess = _session()
+        if sess is None or not hasattr(sess, "resume_now"):
+            return "error: resuming isn't available here"
+        return "ok: resumed" if sess.resume_now("agent") else f"not resumed: the session is {state.session}"
 
     return {"point_at": point_at, "laser_off": laser_off, "propose_done": propose_done, "show_text": show_text,
-            "show_image": show_image}
+            "show_image": show_image, "point_sequence": point_sequence, "go_to_step": go_to_step,
+            "set_timer": set_timer, "cancel_timer": cancel_timer, "remember": remember,
+            "set_servings": set_servings, "pause_session": pause_session, "resume_session": resume_session}
 
 
 # ───────────────────────── helpers ─────────────────────────
@@ -265,10 +442,12 @@ def jpeg_block(frame, max_px: int) -> dict:
                                         "data": base64.standard_b64encode(buf.tobytes()).decode()}}
 
 
-def build_system(recipe: dict) -> list[dict]:
-    """Stable, cacheable system prefix: instructions + the whole recipe."""
-    return [{"type": "text", "text": SYSTEM + "\n\nRECIPE:\n" + json.dumps(recipe, ensure_ascii=False),
-             "cache_control": {"type": "ephemeral"}}]
+def build_system(recipe: Recipe | dict) -> list[dict]:
+    """Stable, cacheable system prefix: instructions + the whole recipe as numbered text (context.render_recipe).
+    Built once per app run and never edited: any change here would invalidate every cached turn."""
+    body = (render_recipe(recipe) if isinstance(recipe, Recipe)
+            else "RECIPE:\n" + json.dumps(recipe, ensure_ascii=False, sort_keys=True))
+    return [{"type": "text", "text": SYSTEM + "\n\n" + body, "cache_control": {"type": "ephemeral"}}]
 
 
 @dataclass
@@ -276,6 +455,7 @@ class _Exchange:
     step: int           # recipe step when the turn started
     user: dict
     assistant: dict
+    said: str = ""      # the cook's own words this turn ("" for check-ins and app prompts)
 
 
 @dataclass
@@ -286,6 +466,7 @@ class _Turn:
     checkin: bool
     had_pending: bool
     greeting: bool = False                                  # the session-start turn ("hey Remy")
+    said: str = ""                                          # the cook's own words (no app prompts)
     stats: TurnStats = field(default_factory=TurnStats)
     spoken: list[str] = field(default_factory=list)       # sentences handed to on_sentence
     tool_uses: list[dict] = field(default_factory=list)   # tool_use blocks (for the assistant message)
@@ -295,18 +476,11 @@ class _Turn:
     stop_reason: str | None = None
 
 
-def positions(dets, width: int, height: int) -> dict[str, str]:
-    """Where each visible object is, in words: "left, near". Left/right are the user's (a chest camera looks the
-    way they face); near = bottom half of the frame (close to them), far = top half. Best detection per name."""
-    out: dict[str, str] = {}
-    for d in sorted(dets, key=lambda d: -d.conf):
-        if d.name in out or d.name == "hand":
-            continue
-        cx, cy = d.center
-        horizontal = "left" if cx < width / 3 else "right" if cx > 2 * width / 3 else "centre"
-        out[d.name] = f"{horizontal}, {'near' if cy > height / 2 else 'far'}"
-    return out
-
+# What to say when the model called only this tool and said nothing (see Agent._backstop).
+_BACKSTOP_LINES = {"set_timer": "Okay, timer's running.", "cancel_timer": "Okay, timer cancelled.",
+                   "remember": "Got it, I'll keep that in mind.", "set_servings": "Okay, I've scaled the amounts.",
+                   "pause_session": "Sure, I'll wait. Say I'm back when you're ready.",
+                   "resume_session": "Welcome back."}
 
 # Sentences that talk ABOUT the instructions instead of to the cook ("In plain mode I give one action...",
 # "The user is holding the avocado..."): the model occasionally thinks out loud. Never speak them.
@@ -342,6 +516,14 @@ def _camera_preference(text: str) -> bool | None:
     return None
 
 
+def _user_words(text: str) -> str:
+    """The cook's own words in an agent turn's text: what follows "User: " in an app prompt ("[session start ...]
+    User: let's make guac"), nothing for a bare app prompt, else all of it."""
+    if "User: " in text:
+        return text.rsplit("User: ", 1)[1].strip()
+    return "" if text.startswith("[") else text.strip()
+
+
 def _has(text: str, phrases) -> bool:
     t = " " + re.sub(r"[^a-z' ]+", " ", text.lower()) + " "
     t = re.sub(r"\s+", " ", t)
@@ -372,7 +554,7 @@ class Agent:
         # takes 30 s is worse than the canned fallback line.
         self.client = client or anthropic.AsyncAnthropic(timeout=CLIENT_TIMEOUT_S, max_retries=1)
         self.first_token_timeout = getattr(cfg, "first_token_timeout_s", FIRST_TOKEN_TIMEOUT_S)
-        self.system = build_system(dataclasses.asdict(state.recipe))
+        self.system = build_system(state.recipe)
         self.busy = False
         self._exchanges: list[_Exchange] = []
         self._pending: list[dict] = []     # tool_results owed to the next user message
@@ -387,6 +569,8 @@ class Agent:
         self.checkins = None                       # CheckIns, set by main, so "talk less" can change its level
         self._positions: dict[str, str] = {}       # object -> "left, near" for the frames of the current turn
         self.last_usage = None                     # token usage of the last request (cache_read_input_tokens ...)
+        self._heard: deque[tuple[float, str, int]] = deque(maxlen=12)   # (time.time(), the cook's words, step)
+        self._events_seen = 0                      # State.events index at the last turn start
 
     # ----- public API -----
 
@@ -429,6 +613,7 @@ class Agent:
         self.cancel()
         self._exchanges.clear()
         self._pending, self._notices = [], []
+        self._heard.clear()
         self._fallback_steps.clear()
 
     async def prewarm(self) -> None:
@@ -463,21 +648,32 @@ class Agent:
     # ----- turn plumbing -----
 
     def _note(self, frames: list | None = None) -> str:
-        note = self.state.note()
-        self._positions = {}
-        if frames:                          # say where things are, not just that they are visible
+        """The [state ...] line: context.state_note() + what only the agent knows (its last sentence, failed tools,
+        what the cook said that has scrolled out of the kept history)."""
+        self._positions, size = {}, None
+        if frames and not self.camera_ignored:  # say where things are, not just that they are visible
             h, w = frames[-1].shape[:2]
+            size = (w, h)
             self._positions = positions(self.state.dets, w, h)
-        if self._positions:
-            where = ", ".join(f"{n} ({p})" for n, p in sorted(self._positions.items()))
-            note, hit = re.subn(r"visible: [^|]*", lambda m: f"visible: {where} ", note, count=1)
-            if not hit:
-                note += f" | visible: {where}"
+        camera = "ignored" if self.camera_ignored else ("ok" if frames else "offline")
+        kept = {e.said for e in self._exchanges if e.said}
+        earlier = [(t, w) for t, w, _ in self._heard if w not in kept][-HEARD_EARLIER:]
+        note = state_note(self.state, frame_size=size, camera=camera, heard_earlier=earlier,
+                          questions_on_step=self._questions_on_step())
         if self.recent_sentences:
             note += f' | you last said: "{self.recent_sentences[-1][:120]}"'
         if self._notices:
             note += " | last turn: " + "; ".join(self._notices)
         return note
+
+    def _questions_on_step(self) -> int:
+        """Questions the cook asked since the current step started (a hint that they may be stuck)."""
+        since = time.time() - self.state.step_seconds()
+        return sum(1 for t, w, step in self._heard if step == self.state.step and t >= since and is_question(w))
+
+    def _moved_since_last_turn(self) -> bool:
+        """A deliberate jump (go_to_step) since the last turn, as opposed to the recipe starting over."""
+        return any("moved from step" in e.text for e in self.state.events[self._events_seen:])
 
     def _apply_preferences(self, text: str) -> list[str]:
         """"say it simpler", "talk less" ...: change the setting locally and tell the model, so it confirms."""
@@ -508,43 +704,62 @@ class Agent:
 
     def _begin(self, user_text: str, frames: list) -> _Turn:
         step = self.state.step
-        if self._exchanges and step < self._exchanges[-1].step:     # session restarted
-            self._exchanges.clear()
+        if self._exchanges and step < self._exchanges[-1].step and not self._moved_since_last_turn():
+            self._exchanges.clear()                                  # session restarted
             self._pending, self._notices = [], []
+            self._heard.clear()
             self.camera_ignored = False                              # a new session starts with the camera in use
+        self._events_seen = len(self.state.events)
         checkin = user_text.startswith("[check-in")
-        body = user_text if checkin else f"User: {user_text}"
+        said = "" if checkin else _user_words(user_text)
+        body = user_text if checkin or user_text.startswith("[") else f"User: {user_text}"
         changes = [] if checkin else self._apply_preferences(user_text)
         if self.camera_ignored:
             frames = []                     # the user said to ignore the camera: no images at all
+        self._trim(step)                    # first, so "cook said earlier" knows what the history still holds
         note = self._note(frames)
         if self.camera_ignored:
-            note = re.sub(r"visible: [^|]*", "visible: unknown ", note, count=1)
             note += " | camera: IGNORED at the user's request (never mention it; go by the recipe and what they say)"
         elif frames:
             self._camera_told = False
         else:                               # no camera: say so (once per outage) and send no images
             note += " | camera: OFFLINE, no images" + (" (user already told)" if self._camera_told else " (tell the user once)")
             self._camera_told = self._camera_told or not checkin
+        if said:
+            self._heard.append((time.time(), said, step))
         extra = ("[mode: plain]\n" if self.plain else "") + "".join(f"[setting changed: {c}]\n" for c in changes)
         content = list(self._pending)
         content += [jpeg_block(f, self.cfg.frame_max_px) for f in frames]
         content.append({"type": "text", "text": f"[{note}]\n{extra}{body}"})
         return _Turn(user={"role": "user", "content": content}, step=step, checkin=checkin,
-                     had_pending=bool(self._pending), greeting=user_text.startswith("[session start"))
+                     had_pending=bool(self._pending), greeting=user_text.startswith("[session start"), said=said)
 
-    def _messages(self, ts: _Turn) -> list[dict]:
-        """Trimmed history + this turn's user message."""
+    def _trim(self, step: int) -> None:
+        """Keep the current step's turns + at least KEEP_TURNS recent ones (at most MAX_HISTORY_TURNS). Only ever
+        drops from the FRONT, so the kept history stays a byte-identical prefix (cache hits, valid tool pairs)."""
         ex = self._exchanges
-        first_current = next((i for i, e in enumerate(ex) if e.step >= ts.step), len(ex))
-        start = min(first_current, max(len(ex) - KEEP_TURNS, 0))
+        first_current = len(ex)             # start of the trailing run of turns on this step
+        while first_current > 0 and ex[first_current - 1].step == step:
+            first_current -= 1
+        start = max(min(first_current, len(ex) - KEEP_TURNS), len(ex) - MAX_HISTORY_TURNS, 0)
         if start:
-            del ex[:start]                  # only ever drop from the front
+            del ex[:start]
         if ex:   # its tool_results answered a tool_use we just dropped (or never existed): remove them
             ex[0].user["content"] = [b for b in ex[0].user["content"] if b.get("type") != "tool_result"]
+
+    def _messages(self, ts: _Turn) -> list[dict]:
+        """Trimmed history + this turn's user message. A cache breakpoint goes on the last block of the history (the
+        previous reply): everything before it is byte-identical to the last request, so the next request reads it
+        from the cache. The new user message (images, state note) is after it: those change every turn."""
+        self._trim(ts.step)
         msgs = []
-        for e in ex:
+        for e in self._exchanges:
             msgs += [e.user, e.assistant]
+        if msgs:
+            last = msgs[-1]
+            blocks = list(last["content"])
+            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+            msgs[-1] = {**last, "content": blocks}       # a copy: the stored history never carries the marker
         return msgs + [ts.user]
 
     def _params(self, messages: list[dict], model: str | None = None) -> dict:
@@ -670,13 +885,20 @@ class Agent:
                 break
             use = uses.get(r["tool_use_id"], {})
             result, obj = str(r.get("content", "")), use.get("input", {}).get("name")
-            if use.get("name") == "propose_done" and result.startswith("push_back"):
+            ok = result.startswith("ok")
+            if use.get("name") == "go_to_step" and ok:
+                line = f"Okay, step {self.state.step + 1}. {step.fallback}"
+            elif use.get("name") in _BACKSTOP_LINES and ok:
+                line = _BACKSTOP_LINES[use["name"]]
+            elif use.get("name") == "point_sequence" and ok:
+                line = "Here's what you need."
+            elif use.get("name") == "propose_done" and result.startswith("push_back"):
                 reason = result.partition(": ")[2]
                 line = f"Hold on, {reason}." if reason else "Hold on, that doesn't look finished yet."
             elif use.get("name") == "propose_done" and result == "advance":
                 line = f"Nice work. {self.state.current_step.fallback}"          # state.step already moved on
             elif use.get("name") == "propose_done" and result == "finished":
-                line = "That's it, you did it! Enjoy your guacamole."
+                line = f"That's it, you did it! Enjoy your {self.state.recipe.name.lower()}."
             elif use.get("name") == "point_at" and obj:
                 where = self._positions.get(obj, "").split(",")[0]       # "left" / "centre" / "right"
                 here = f"Here's the {obj}" + (f", on your {where}." if where in ("left", "right") else
@@ -729,6 +951,6 @@ class Agent:
         content = ([{"type": "text", "text": text}] if text else []) + ts.tool_uses
         # images are the main cost of old turns, and the next turn sends fresh frames anyway
         user = {"role": "user", "content": [b for b in ts.user["content"] if b.get("type") != "image"]}
-        self._exchanges.append(_Exchange(ts.step, user, {"role": "assistant", "content": content}))
+        self._exchanges.append(_Exchange(ts.step, user, {"role": "assistant", "content": content}, ts.said))
         self._pending = ts.results
         self._notices = ts.notices

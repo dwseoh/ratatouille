@@ -158,7 +158,7 @@ def test_validate_tool_input():
     assert "unexpected" in validate_tool_input("point_at", {"name": "lime", "x": 1})
     assert "string" in validate_tool_input("point_at", {"name": 3})
     assert "not an object" in validate_tool_input("point_at", "lime")
-    assert "unknown" in validate_tool_input("set_timer", {})
+    assert "unknown" in validate_tool_input("make_coffee", {})          # (set_timer exists now)
     assert validate_tool_input("show_image", {"step": 3}) is None
     assert "integer" in validate_tool_input("show_image", {"step": "3"})
     assert "missing" in validate_tool_input("show_image", {})
@@ -215,7 +215,7 @@ def test_tool_results_are_deferred_to_next_turn_and_not_visible_is_noted():
 
 def test_bad_or_unknown_tool_input_returns_error_result_and_skips_handler():
     called = []
-    s1 = FakeStream([text("Pointing now for you. "), tool("a", "point_at", {}), tool("b", "set_timer", {"seconds": 5})], "tool_use")
+    s1 = FakeStream([text("Pointing now for you. "), tool("a", "point_at", {}), tool("b", "make_coffee", {"cups": 5})], "tool_use")
     s2 = FakeStream([text("Okay, noted that one. ")])
     agent, *_ = make_agent(s1, s2)
     agent.handlers["point_at"] = lambda **kw: called.append(kw)
