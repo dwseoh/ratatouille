@@ -32,7 +32,7 @@ const char *MDNS_NAME = "coach-cam";   // -> http://coach-cam.local:81/stream
 // 2 buffers / GRAB_LATEST the old sketch got corrupted, banded JPEGs and 3-4 s per frame.
 // Change ONE thing at a time from here, and keep a setting only if the [stream] line stays healthy.
 #define XCLK_HZ      10000000
-#define FRAME_SIZE   FRAMESIZE_QVGA   // 320x240. Next to try: FRAMESIZE_HVGA (480x320)
+#define FRAME_SIZE   FRAMESIZE_VGA   // 640x480: works with these settings (10 MHz, 1 buffer). Fallback: FRAMESIZE_QVGA
 #define FB_COUNT     1
 #define GRAB_MODE    CAMERA_GRAB_WHEN_EMPTY
 #define JPEG_QUALITY 12               // lower number = better image, bigger frames
