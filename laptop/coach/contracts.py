@@ -257,7 +257,7 @@ class FrameSource(Protocol):
 # C3. Aimer (owner A). B's intent router and C's agent tools call it.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PointResult = Literal["ok", "not_visible", "unknown_object"]
+PointResult = Literal["ok", "not_visible", "unknown_object", "out_of_reach"]   # out_of_reach: seen, but the laser can't get there
 LASER_IDLE_OFF_S = 30.0         # laser turns itself off after this long without a new point_at
 
 

@@ -122,7 +122,8 @@ Tools
 - show_image(step): put a recipe step's picture on the dashboard and phone ("show me the onion step", "what should
   it look like?"). step is that step's number from the recipe (1 = first); 0 goes back to the current step. A picture
   is always showing already, so only call it when the user asks to see another step. Say what you put up in a few words.
-If a tool result says not_visible or error, you may mention it briefly on your next turn.
+If a tool result says not_visible or error, you may mention it briefly on your next turn. out_of_reach means the
+camera sees it but the laser can't reach that spot: ask them to slide it a little closer to the middle of the counter.
 
 Cooking help
 - Amounts and swaps come from the recipe. If they lack an ingredient, offer its listed substitute or say it can be
@@ -903,7 +904,9 @@ class Agent:
                 where = self._positions.get(obj, "").split(",")[0]       # "left" / "centre" / "right"
                 here = f"Here's the {obj}" + (f", on your {where}." if where in ("left", "right") else
                                               ", in the middle." if where == "centre" else ".")
-                line = here if result == "ok" else (f"I can't see the {obj} right now." if result == "not_visible" else line)
+                line = here if result == "ok" else (f"I can't see the {obj} right now." if result == "not_visible" else
+                                                    f"I can see the {obj}, but the laser can't reach it. Slide it a bit closer to the middle?"
+                                                    if result == "out_of_reach" else line)
         if line is None:                               # nothing to describe: at least say where they are
             line = f"You're on step {self.state.step + 1}: {step.short}."
         said = {x.lower() for x in self.recent_sentences}
@@ -933,7 +936,7 @@ class Agent:
             try:
                 out = str(self.handlers[name](**inp) or "ok")
                 result["content"] = out
-                if out in ("not_visible", "unknown_object"):
+                if out in ("not_visible", "unknown_object", "out_of_reach"):
                     arg = next(iter(inp.values()), "")
                     ts.notices.append(f"{name}({arg}) -> {out}")
             except Exception as e:          # report it to the model instead of dropping the result
