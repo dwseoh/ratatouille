@@ -11,7 +11,7 @@ Setup tuning (lens, light, distance, angle): the bars at the bottom show each wa
 the frame, even below its threshold (the tick). Change one thing, watch whether the bar grows, keep what helps.
 --watch picks the objects (default: avocado lime tomato). The scores are also printed once a second.
 
-Done when (task-specs P3): >= 10 fps, and avocado / lime / bowl visible in >= 80% of frames.
+Target: >= 10 fps, and avocado / lime / bowl visible in >= 80% of frames.
 Keys: q = quit.
 """
 import argparse

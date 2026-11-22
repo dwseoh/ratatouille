@@ -440,7 +440,7 @@ def build_pipeline(cfg, agent: AgentAPI, frames: FrameSource, state: State, *,
         idle_timeout_secs=None,   # the coach listens all session; never auto-cancel when quiet
         enable_rtvi=False,        # no web client
         # A dead STT/TTS (bad key, no network) would leave the coach silently deaf: stop instead.
-        # (An offline fallback was cut, see docs/cut-list.md: if STT/TTS dies, the coach stops.)
+        # (An offline fallback was cut, see docs/design-notes.md: if STT/TTS dies, the coach stops.)
         processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
     )
     speech = Speech(proc, state)

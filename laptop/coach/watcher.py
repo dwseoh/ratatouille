@@ -9,7 +9,7 @@ Two jobs
                     - the latest verdict is cached for B2: `latest_verdict(step)` is Steps' verdict_provider,
                       so a premature "I'm done" can be pushed back (it must not block, hence cached).
 
-(The local knife-near-hand warning was cut: it would fire constantly while cutting. See docs/cut-list.md.
+(The local knife-near-hand warning was cut: it would fire constantly while cutting. See docs/design-notes.md.
 Knife safety lives in the recipe `tips` and the agent's prompt instead.)
 
 The watcher speaks in exactly one place, and it is guarded: the "ready for the next step?" question, only when

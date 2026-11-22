@@ -15,7 +15,7 @@ labels.json (paths relative to it):
   Videos get one label set for the whole clip (sampled every `every` frames), so record clips where the
   objects in view don't change. `python -m tools.try_yolo <cam url> --save clip.mp4` records one.
 
-Per-frame scores, no 2-of-3 smoothing (the live app smooths, which only helps). Done-when (task-specs P3):
+Per-frame scores, no 2-of-3 smoothing (the live app smooths, which only helps). Target:
 avocado / lime / bowl found in >= 80% of the frames they're in.
 """
 from __future__ import annotations

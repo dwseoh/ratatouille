@@ -1,91 +1,181 @@
 # Architecture
 
-## Topology
+How the pieces fit together. The shared interfaces are in `laptop/coach/contracts.py`. Each one has a fake, so
+every part can run without the others.
 
-The laptop is a star hub. Everything connects to it, nothing connects to anything else.
-
-| Link | Transport | Direction | Notes |
-|---|---|---|---|
-| CAM → laptop | MJPEG over HTTP, `http://coach-cam.local:81/stream` | one way | Grabber thread keeps only the newest frame. Reconnects with backoff. |
-| laptop ↔ S3 | UDP, port 4210 | both | Laptop sends a control packet at 30 Hz, which doubles as a heartbeat. S3 replies with status every 200 ms. See [protocol.md](protocol.md). |
-| mic → laptop | Bluetooth (or a 2.4 GHz lav dongle) | in | OS audio input device |
-| laptop → speaker | Bluetooth A2DP (or wired) | out | OS audio output device |
-| laptop → cloud | HTTPS (Claude API, STT, TTS) | both | One long-lived client per service, connection reused |
-
-All devices join the **same phone hotspot**, in 2.4 GHz / "maximize compatibility" mode.
-The ESPs advertise mDNS names (`coach-cam.local`, `coach-ctl.local`), so the laptop doesn't need
-to know IPs. If mDNS misbehaves, put IPs in `.env`.
-
-### Staying connected
-
-- **Camera:** if `read()` fails or no frame arrives for 2 s, reopen the stream (1 s, 2 s, 4 s backoff).
-  The dashboard shows "camera lost" and the voice loop keeps working without vision.
-- **S3:** the laptop streams control packets nonstop. If the S3 hears nothing for 500 ms it turns the
-  laser **off** and holds the servos (fail safe). If the laptop hears no status for 1 s, it marks
-  the controller offline and keeps resending. UDP needs no reconnect: as soon as packets flow again it works.
-- **Cloud:** one `AsyncAnthropic` client for the app's lifetime (keep-alive connection). The SDK
-  retries 429/5xx. Pre-warm the prompt cache at startup.
-- **Bluetooth:** paired at the OS level, and the app just opens the default input and output devices.
-  Two separate devices (mic plus speaker) avoid the "headset mode" (HFP) quality drop that happens
-  when one BT device does both mic and speaker.
-- **Microcontroller to microcontroller:** none. If that's ever needed, ESP-NOW (direct
-  ESP-to-ESP radio) is the fallback, but the laptop relaying is simpler.
-
-## Loop 1: Pointing (20-30 Hz, local)
+## 1. The picture
 
 ```
-latest frame ─▶ YOLO-World (target box) ─┐
-            └─▶ red-dot finder (HSV) ────┴─▶ aimer ─▶ UDP "C pan tilt laser seq"
+   ON THE CHEST                          LAPTOP: ONE Python process (asyncio)                  CLOUD
+ ┌───────────────────┐  phone hotspot  ┌──────────────────────────────────────────────────────┐
+ │ CAM ESP32         │──MJPEG video───▶│ FrameGrabber (thread) ──▶ YOLO-World detector         │
+ │  camera           │                 │      │                    (thread) ──▶ State.dets    │
+ ├───────────────────┤                 │      │                                                │
+ │ S3 ESP32          │◀─UDP C/T/R──────│ ControlLink (30 Hz) ◀── Aimer (calibration, 30 Hz)    │
+ │  pan/tilt servos, │──UDP S─────────▶│                                     ▲ point_at       │
+ │  laser, TFT       │                 │                                     │                │
+ └───────────────────┘                 │ Pipecat pipeline:                   │                │
+                                       │  mic ─▶ Silero VAD ─▶ Deepgram STT ─┼───────────────┼──▶ Deepgram
+ mic ─────────────────────────────────▶│        smart-turn      │ interim    │               │    STT + TTS
+ speaker ◀─────────────────────────────│                        ├─▶ intent router (local) ─┘   │
+                                       │                        │   (<50 ms)                  │
+                                       │                        └─▶ final text ─▶ Agent ──────┼──▶ Claude
+                                       │                                 │ sentences          │   Opus 5.5
+                                       │  Deepgram TTS ◀── Speech ◀──────┘  tools: point_at,   │
+                                       │                                     laser_off,       │
+                                       │  Check-ins ──▶ Agent                propose_done,    │
+                                       │  Watcher (Haiku) ──▶ event log      show_text,       │
+                                       │  Steps: the only writer of State.step   show_image   │
+                                       │  Telemetry ──▶ State.turns                           │
+                                       │  FastAPI dashboard ── reads State ──▶ browser/phone  │
+                                       └──────────────────────────────────────────────────────┘
 ```
 
-- YOLO-World (`yolov8s-worldv2`, open vocabulary) with `set_classes(recipe.objects)`.
-  On the M2, use `device="mps"`, 640 px input. Export to CoreML if it runs too slowly.
-- Dot finder: threshold on very bright pixels with a red hue, take the largest blob near the last
-  dot position. Blink the laser to confirm it's the dot and not a red tomato.
-- Aimer: calibration gives the first aim (pixel → angles), then a P-controller on the
-  remaining error until it's within ~10 px. Clamp tilt so the laser can never point up at faces.
+Rules that make it fast:
 
-## Loop 2: Voice (on speech): latency is the core goal
+- **Local decisions run alongside the agent, never before it.** Silero VAD, smart-turn, YOLO-World and the
+  intent router all run on the laptop. They act at once (move the laser, stop talking, advance the step) while
+  Claude is still thinking.
+- **Claude only does the talking.** It streams sentences, and each one goes to TTS as soon as it's complete.
+- **The ESPs only talk to the laptop**, never to each other or to the cloud.
+
+## 2. What runs where
+
+| Component | File | Runs as |
+|---|---|---|
+| Frame grabber | `coach/frames.py` | thread, keeps only the newest frame; `CAM_ROTATE` turns frames to match how the board is mounted |
+| YOLO-World detector | `coach/vision.py` | thread, per-class thresholds + 2-of-3 smoothing, writes `State.dets` |
+| Control link (UDP to the S3) | `coach/control.py` | asyncio task, sends `C` at 30 Hz, ramps servo moves (max 2° per packet) |
+| Aimer | `coach/aim.py` | asyncio task: target box → calibration → pan/tilt. Laser off after 30 s idle |
+| Dot finder + closed loop | `coach/vision.py`, `coach/dot.py` | optional (`--closed-loop`): finds the real dot (blink check) and corrects the aim |
+| Calibration | `coach/calibrate.py`, `coach/calib_web.py`, `coach/jog.py` | run once; saves `calibration.json` |
+| Voice pipeline | `coach/voice.py`, `coach/echo.py` | Pipecat: VAD, STT, TTS, barge-in, echo gate |
+| Intent router | `coach/intents.py` | keywords → fuzzy match → MiniLM embeddings, on each interim transcript |
+| Session | `coach/session.py` | "hey Remy" starts, "start over" resets |
+| Agent | `coach/agent.py` | one streamed Claude turn per utterance, tools run mid-stream |
+| Steps | `coach/steps.py` | the step machine, the only writer of `State.step` |
+| Check-ins | `coach/checkin.py` | wakes every ~1 s; speaks only when it's quiet |
+| Watcher | `coach/watcher.py` | a cheaper vision model (Haiku) every few seconds: event log + "looks done, next step?" |
+| Telemetry | `coach/telemetry.py` | latency marks per turn |
+| Dashboard | `coach/dashboard.py`, `coach/captions.py` | FastAPI in the same process; pages built from `laptop/frontend` into `coach/static/` |
+| Recipe tools | `coach/recipe_import.py`, `coach/recipe_images.py` | import a recipe from a web page, PDF or photo; step pictures |
+| Wiring | `coach/main.py` | entry point |
+| Camera firmware | `firmware/camera/` | MJPEG stream on the camera ESP32 |
+| S3 firmware | `firmware/control_s3/` | UDP → servos, laser, TFT |
+
+The laptop is both the backend and the frontend. The dashboard is served by the same Python process, so it reads
+`State` directly, and there is nothing else to install or deploy.
+
+## 3. One turn: "where's the lime?"
+
+Rough timeline (estimates; the dashboard shows the measured numbers per turn).
+
+| t (ms) | What happens |
+|---|---|
+| 0 | User starts talking. Silero VAD fires. If the coach was speaking, it stops and the agent turn is cancelled (barge-in). |
+| ~300 | Deepgram sends an interim transcript: "where's the li…" |
+| ~450 | Interim says "where's the lime". The intent router returns `POINT lime` in under 50 ms. |
+| ~500 | `point_at("lime")` returns at once. The aimer swings the servos using the calibration. |
+| ~650 | **The laser is on the lime** before the user has finished the sentence. |
+| ~800 | User stops talking. Smart-turn decides the sentence is finished (shorter when it clearly sounds done). |
+| ~1150 | Final transcript goes to the agent with the latest frames and a state note (step, visible objects, laser target). |
+| ~1150 + ~1200 | First full sentence from Claude ("There it is, the lime's right by the bowl."), spoken immediately. |
+| after | Tool calls (`point_at`, `show_text`…) run locally the moment their input is complete. Their results ride along with the next turn instead of costing a second request. |
+
+The user sees the laser move *while they're still talking*, and hears the answer about a second after they stop.
+We picked Claude Opus 5.5 in fast mode by benchmarking time to the first spoken sentence (about 1.2 s, against
+about 2 s for the alternatives).
+
+If the router matches nothing, nothing happens early and the agent handles it alone. If the lime isn't visible,
+`point_at` returns `"not_visible"` and the agent, which already knows from the state note, says "I don't see the
+lime" instead of pretending.
+
+Other router intents act the same way:
+
+| Intent | Instant action |
+|---|---|
+| `POINT` | `point_at(obj)` |
+| `DONE` | `propose_done("user")` → the step advances, the TFT updates |
+| `STOP` | stop speaking + cancel the agent turn |
+| `REPEAT` | an agent turn (it repeats the step in its own words) |
+| `START_OVER` | reset the session |
+
+## 4. Check-ins and the watcher
+
+The **check-in loop** wakes about once a second and only acts when the session is active, nobody is talking and no
+turn is running:
+
+1. **Step start:** when the step changes, the coach explains the new step and points at its first object.
+2. **Silence:** after ~20 s of quiet (45 s in "talk less" mode), it runs a normal agent turn with fresh frames and
+   a hidden note asking for a brief comment only if something is worth saying. Often the answer is nothing.
+
+The **watcher** sends a cheaper model 3-4 recent frames every few seconds. It logs what changed ("avocado halved")
+to the event log, and when a step looks done it asks once, "looks mashed, ready for the next step?". It never
+advances a step by itself: the user's "done" always wins.
+
+If the user starts talking in the middle, barge-in stops it.
+
+## 5. Session flow
 
 ```
-mic ─▶ VAD + streaming STT ─▶ (point-first keyword match ─▶ loop 1 immediately)
-                          └─▶ Claude (streamed) ─▶ sentence splitter ─▶ streaming TTS ─▶ speaker
-                                    └─ tool calls: point_at / next_step / set_timer / show_text
+ idle ──"hey Remy"──▶ active: greeting + step 1 explained + laser points at step 1's objects
+                        │
+                        ├─ user talks / check-ins / "done" → steps advance → next step explained
+                        │
+                        └─ last step done → the coach wraps up → idle
+ any time: "start over" → stop speech, cancel the agent, laser off, steps reset, history cleared → idle
 ```
 
-### Latency budget (end of speech → first audible word)
+The recipe is picked on the laptop (`RECIPE=recipes/<name>.json`). It holds **facts, not a script**: `goal`,
+`how`, `tips`, `point`, `done_when`, `fallback`, plus `aliases` for each object. The agent explains steps in its
+own words. Only `fallback` is ever read out word for word, and only when the API fails.
 
-| Stage | Naive | Target | How |
-|---|---|---|---|
-| Detect end of speech | 800 ms | **250-400 ms** | STT endpointing at ~300 ms of silence; start early on a confident partial transcript |
-| Final transcript | 300 ms | **~100 ms** | Streaming STT: the transcript is already built while you talk |
-| Claude first token | 1.5-3 s | **0.5-1 s** | Short prompt, cached prefix, 2-3 small frames, low effort, short answers; measure models |
-| TTS first audio | 500 ms | **~150 ms** | Streaming TTS, starting on the first sentence or clause |
-| Audio output | 200 ms (BT) | 30-200 ms | Wired is fastest; BT A2DP adds 100-200 ms |
-| **Total** | ~3-5 s | **~1-1.6 s** | |
+## 6. Connections and failures
 
-What makes it *feel* instant even inside that budget:
-1. **Point first.** A keyword match on the partial transcript ("lime") moves the laser before Claude answers.
-2. **Instant acknowledgement.** A short earcon or "mm-hm" plays the moment speech ends, and the display shows "thinking…".
-3. **Barge-in.** If the user starts talking, stop TTS right away.
-4. **Tools don't cost a second round trip.** Claude speaks, then calls tools. The tools run locally and their
-   `tool_result`s are attached to the *next* user turn instead of making a second request.
+All devices join one **phone hotspot** on 2.4 GHz (ESP32s can't use 5 GHz or captive portals). The boards
+advertise mDNS names (`coach-cam.local`, `coach-ctl.local`); if mDNS misbehaves, put IPs in `.env`.
 
-## Loop 3: Watcher (every 3-5 s)
+| Link | Transport | Notes |
+|---|---|---|
+| Camera → laptop | MJPEG over HTTP, `http://coach-cam.local:81/stream` | One client at a time. Reconnects with backoff. |
+| Laptop ↔ S3 | UDP 4210 | 30 Hz control packet doubles as a heartbeat; status back every 200 ms. See [protocol.md](protocol.md). |
+| Mic / speaker | OS audio devices | Separate mic and speaker avoid Bluetooth headset mode (HFP). |
+| Laptop → cloud | HTTPS | One long-lived client per service; the prompt cache is warmed at startup. |
 
-Sends Claude 3-4 timestamped frames plus the event log, and gets back new events
-("avocado halved") and whether the current step looks finished. It only speaks up on its own to ask
-"ready for the next step?" when it sees a step finished. (Safety warnings were cut; see cut-list.md.)
+| Failure | What the user gets |
+|---|---|
+| Camera down | Voice still works. The coach says once that it can't see, and the laser stays off. |
+| S3 offline | Everything works except the laser and TFT; the dashboard shows the link as red. The S3's own watchdog turns the laser off 0.5 s after packets stop. |
+| Claude slow or erroring | It retries once on Haiku, then speaks the step's `fallback` line. Keyword pointing still works. |
+| Deepgram down | No voice. The backup is a recorded demo video. |
+| No calibration file | The laser can't aim; run the calibration first. |
 
-## Displays
+## 7. State: one writer per field
 
-- **TFT on the S3** (1.54", 240×240, SPI; 5 lines of 20 chars): connection state, current step, target, last latency, short verbose
-  status lines sent by the laptop (`T` command).
-- **Laptop dashboard** (FastAPI): live feed with YOLO boxes and dot, step, event log,
-  transcript, per-stage latency numbers. This is for the judges, who can't see what your chest sees.
+| Field | Writer | Main readers |
+|---|---|---|
+| `recipe` | loaded once at startup | everyone |
+| `step` | Steps | agent, dashboard, TFT |
+| `dets` | YOLO detector | aimer, router, agent note, dashboard |
+| `dot` | dot finder (closed loop only) | aimer, dashboard |
+| `target`, `on_target` | Aimer | agent note, dashboard, telemetry |
+| `transcript`, `speaking`, `user_talking`, `last_activity` | voice | check-ins, dashboard |
+| `session` | Session | everyone |
+| `events` | anyone, through `State.log()` | agent note, dashboard |
+| `turns` | telemetry | dashboard, TFT |
 
-## Team split
+Only touch `State` from the asyncio loop. Threads hand results back with `loop.call_soon_threadsafe`.
 
-- **A:** firmware, servos, laser, YOLO, dot, calibration, aimer (loop 1).
-- **B:** voice pipeline, Claude agent, recipe, watcher, dashboard (loops 2 and 3).
-- Contract between the two halves: `vision.Detections` and `aim.Aimer.set_target(name)`.
+## 8. Running each piece alone
+
+Every interface has a fake in `contracts.py` (smoke test: `cd laptop && python -m coach.contracts`).
+
+| Piece | Run it with |
+|---|---|
+| S3 link | `python tools/fake_s3.py` in one terminal, `python -m coach.main --ctl 127.0.0.1` in another |
+| Frames / YOLO | `--cam 0` (laptop webcam) or a video file; `python -m tools.try_yolo 0` shows live boxes and scores |
+| Aimer | `FakeLink` + `fake_dets()`: no servos needed to test the maths |
+| Voice | `python -m tools.try_voice` (echo agent) or `python -m coach.main --fake-agent` |
+| Agent | `python -m coach.agent_cli` (typed, no app) |
+| Whole app, typed | `python -m coach.main --type --no-s3 --no-yolo --cam black` |
+| Dashboard | `python -m tools.try_dashboard` (fake data) |

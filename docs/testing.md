@@ -1,36 +1,22 @@
-# C's QA script: how to test everything by hand
+# Testing
+
+Automated tests: `cd laptop && python -m pytest -q`. The rest of this page tests everything by hand.
 
 Do these in order. Each test says what to run, what you should see, and what a failure usually means.
 Everything here runs from the repo root unless it says `cd laptop`. "Typed" tests need no mic, speaker or hardware.
 
 **Cost:** a typed session costs a few cents (Opus 5.5 fast mode is ~$0.04 per turn). The full live script is ~$1.
 
-## Test status (updated 2026-11-21)
-
-Tested means Chloe ran it and it worked; the exact numbers were not written down, so re-run if you need them for the pitch.
-
-| Area | Status | Notes |
-|---|---|---|
-| Unit tests | **Tested** | 346 passed on 2026-11-21 (offline, after pulling Hanjing's changes) |
-| Live agent checks (`tools/live_agent_check.py`) | **Tested** | real key, about $1 |
-| Live watcher checks (`tools/live_watcher_check.py`) | **Tested** | real key |
-| Typed run through all 7 steps (`python -m coach.main --type`) | **Tested** | |
-| Voice mode with the microphone | **Tested** | check-ins and watcher behaviour inside voice mode were not recorded separately |
-| Phone dashboard (section 4) | **NOT tested** | needs phone on the same WiFi; also check the display options on a phone |
-| Fallback drills (section 6) | **NOT tested** | slow API, backup model, bad key, no key, camera down, refusal |
-| Anything on real hardware | **NOT tested** | real ESP32 camera stream, S3 (servos, laser, TFT), calibration, laser landing on a real object, latency on the real device |
-
 ## 0. Setup (once)
 
 ```bash
-cd laptop && ../.venv/bin/pip install -r requirements.txt      # pipecat, rapidfuzz, sentence-transformers...
+cd laptop && pip install -r requirements.txt      # pipecat, rapidfuzz, sentence-transformers...
 brew install portaudio                                         # needed for the microphone
 ```
 
 - `laptop/.env` needs `ANTHROPIC_API_KEY` (and `DEEPGRAM_API_KEY` for voice). Copy `laptop/.env.example` for the rest.
-- **Renamed setting:** the effort level is `COACH_EFFORT` (it used to be `CLAUDE_EFFORT`, which Claude Code sets in its
-  own shell and which silently beat `.env`). If your `.env` still has `CLAUDE_EFFORT=...`, rename it; the old name is
-  ignored (the default is `low` anyway).
+- The effort level setting is `COACH_EFFORT`, not `CLAUDE_EFFORT` (Claude Code sets that one in its own shell).
+- The live checks need three photos in `tools/test_frames/` (see the README there).
 - The first run downloads a small language model for the intent router (~80 MB). Run the unit tests once with WiFi
   on so it is cached.
 
@@ -38,18 +24,18 @@ brew install portaudio                                         # needed for the 
 
 | What | Command | You should see |
 |---|---|---|
-| Unit tests | `cd laptop && ../.venv/bin/python -m pytest -q` | `346 passed` on 2026-11-21 (a few more if tests were added) |
-| Live agent checks | `.venv/bin/python tools/live_agent_check.py` | `28/28 checks passed` (costs ~$1) |
-| Live watcher checks | `.venv/bin/python tools/live_watcher_check.py` | 4 × PASS |
+| Unit tests | `cd laptop && python -m pytest -q` | all pass |
+| Live agent checks | `python tools/live_agent_check.py` | `28/28 checks passed` (costs ~$1) |
+| Live watcher checks | `python tools/live_watcher_check.py` | 4 × PASS |
 
-If the live script shows one FAIL: run that scenario again alone, e.g. `.venv/bin/python tools/live_agent_check.py plain_language`.
+If the live script shows one FAIL: run that scenario again alone, e.g. `python tools/live_agent_check.py plain_language`.
 A single failure on a model-behaviour check (a sentence a bit too long) is usually the model, not a bug. A FAIL on
-"cache" or "history" checks is a real bug: tell me.
+"cache" or "history" checks is a real bug.
 
 ## 2. The typed coach, no app (5 min)
 
 ```bash
-cd laptop && ../.venv/bin/python -m coach.agent_cli --visible avocado knife bowl lime
+cd laptop && python -m coach.agent_cli --visible avocado knife bowl lime
 ```
 
 Type these one at a time (empty line quits). The camera is black in this harness, so it may say "my camera looks dark": that is expected.
@@ -71,7 +57,7 @@ the second turn `cache: read` is a big number (about 3000), not 0.
 ## 3. The whole app, typed (10 min). This is the main test
 
 ```bash
-cd laptop && ../.venv/bin/python -m coach.main --type --no-s3 --no-yolo --cam black
+cd laptop && python -m coach.main --type --no-s3 --no-yolo --cam black
 ```
 
 Wait about 3 seconds. A boxed **TYPING MODE** banner appears, followed by a `you>` prompt. **That `you>` line is where you
@@ -104,7 +90,7 @@ The automated test `test_full_seven_step_run_with_pushback_and_a_vision_ask` cov
 ## 4. The dashboard on its own (5 min)
 
 ```bash
-cd laptop && ../.venv/bin/python -m tools.try_dashboard
+cd laptop && python -m tools.try_dashboard
 ```
 
 Open http://localhost:8000. Fake data changes every few seconds. Check each part of the page: the step card (step
@@ -152,12 +138,12 @@ address under it, next to the step picture: scan it with the phone camera.
 **Import a recipe** (offline tool, costs a few cents):
 
 ```bash
-.venv/bin/python tools/import_recipe.py "https://www.bbcgoodfood.com/recipes/easy-pancakes" --no-images
+python tools/import_recipe.py "https://www.bbcgoodfood.com/recipes/easy-pancakes" --no-images
 ```
 
 It prints what it found (the objects the camera will look for, and the steps) and asks **Looks right?**. Say `y` to write
 `laptop/recipes/<name>.json`. Check the object list: they must be real things on a counter ("flour", "bowl"), not
-"1 tsp salt, divided". Then try it: `cd laptop && RECIPE=recipes/easy-pancakes.json ../.venv/bin/python -m coach.agent_cli`.
+"1 tsp salt, divided". Then try it: `cd laptop && RECIPE=recipes/easy-pancakes.json python -m coach.agent_cli`.
 When the page has a photo per instruction, each step gets its own (`step-N.jpg`) and the rest keep the dish photo (`hero.jpg`).
 It also takes a PDF, a text file or a photo of a recipe page: `... tools/import_recipe.py ~/Downloads/chili.pdf`.
 Without `--no-images` it also saves the recipe's main picture (check you may use it; local demo only).
@@ -180,7 +166,7 @@ Each of these should print **one sensible canned line** (the step's instruction)
 
 | Drill | How | Expect |
 |---|---|---|
-| Opus too slow, backup works | `FIRST_TOKEN_TIMEOUT_S=0.01 ../.venv/bin/python -m coach.main --type --no-s3 --no-yolo --no-dashboard --cam black`, type `where do I start?` | a **normal answer** (from Haiku, about 1 s after the timeout), not a canned line. The log says `retrying once on claude-haiku-5-5` and the event log shows `agent: answered by claude-haiku-5-5` |
+| Opus too slow, backup works | `FIRST_TOKEN_TIMEOUT_S=0.01 python -m coach.main --type --no-s3 --no-yolo --no-dashboard --cam black`, type `where do I start?` | a **normal answer** (from Haiku, about 1 s after the timeout), not a canned line. The log says `retrying once on claude-haiku-5-5` and the event log shows `agent: answered by claude-haiku-5-5` |
 | Everything too slow | the same command with `BACKUP_MODEL=` (empty) in front | the step's canned line ("Cut the avocados in half lengthwise around the pit."). A second failure on the same step says "Sorry, give me a second." |
 | Bad key | same command with `ANTHROPIC_API_KEY=invalid` in front | the step's canned line (a bad key fails on the backup too) |
 | No key at all | comment out the `ANTHROPIC_API_KEY` line in `laptop/.env`, run the app, then put it back | a red "No Anthropic credentials" line at start, then canned lines |
@@ -205,7 +191,7 @@ Start in plain mode: `PLAIN_LANGUAGE=1` in `.env`.
 ## 8. Voice (needs mic + speaker + Deepgram key) (15 min)
 
 ```bash
-cd laptop && ../.venv/bin/python -m coach.main --no-s3 --no-yolo --cam 0
+cd laptop && python -m coach.main --no-s3 --no-yolo --cam 0
 ```
 
 (`--no-s3` = no hardware; drop it and add `--ctl <ip>` with the S3 powered. Drop `--no-yolo` once the YOLO model is installed.)
@@ -224,8 +210,6 @@ cd laptop && ../.venv/bin/python -m coach.main --no-s3 --no-yolo --cam 0
 
 Watch the dashboard latency bars: first word should be about 1-1.5 s after you stop talking.
 
-**What I could not test (no mic/hardware here):** the real voice pipeline, the S3 board and laser, YOLO on a real
-camera, the check-in/watcher timing over real speech, and the speaker. Test these first when you have the kit.
 After the first real-voice run, tune the system prompt (`SYSTEM` in `laptop/coach/agent.py`) and re-run section 1.
 
 ## 9. Before every demo

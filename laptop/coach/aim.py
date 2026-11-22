@@ -1,6 +1,6 @@
 """Aiming (v1 = open loop): click calibration (pixel -> servo angles) + the Aimer loop that implements AimerAPI.
 
-Closed-loop correction on the seen laser dot is stretch (see docs/cut-list.md): Aimer(..., closed_loop=True)
+Closed-loop correction on the seen laser dot is stretch (see docs/design-notes.md): Aimer(..., closed_loop=True)
 plus a dot.DotTracker writing State.dot. Off by default; with it off nothing here reads State.dot.
 """
 from __future__ import annotations

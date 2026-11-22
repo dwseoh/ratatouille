@@ -2,18 +2,19 @@
 
 ## Parts
 
-| Part | Status | Notes |
-|---|---|---|
-| Freenove ESP32 WROVER CAM (5.7×2.8 cm) | have | Onboard USB, no programmer needed |
-| ESP32-S3 **N8R2** dev board (dual USB-C) | have | 8 MB flash, 2 MB quad PSRAM. Arduino: PSRAM "QSPI PSRAM" (or Disabled), Flash Size 8MB. Flash via the COM port. |
-| Mini pan-tilt kit, assembled, 2× SG90 | buying | Get 2× MG90S spares (metal gears) |
-| KY-008 laser 650 nm | have | ≤5 mW. Driven through a 2N2222 low-side switch. |
-| 20000 mAh 22.5 W power bank | have | Main power: its USB-A port → USB-A-to-C cable → USB-C breakout (J1) on the carrier's 5 V rail |
-| USB-C breakout, **with 5.1 kΩ on CC1 and CC2** ("5V sink" / "power only" board) + USB-A-to-C cable (≥2 A) | buy | J1. Plain socket boards with no resistors give 0 V from a C-to-C cable. |
-| Friend's 4.8 V NiMH packs ×2 | backup | Servo-only power if the boards brown out (see schematic) |
-| BT mic, BT speaker | have | Paired to the laptop |
-| 1.54" 240×240 ST7789 TFT (SPI) | have | Status display. Needs the version on a small PCB with 8 header pins; a bare screen with a 12-pin 0.7 mm ribbon needs an adapter. |
-| 2N2222, 1 kΩ, 10 kΩ, 1000 µF, 100 nF, 2-pin header + jumper cap, jumpers, long headers, mini breadboard, perfboard | buy | 10 kΩ keeps the laser off during boot; header + cap is JP1 |
+| Part | Notes |
+|---|---|
+| Freenove ESP32 WROVER CAM (OV3660), 5.7 × 2.8 cm | Camera board. Onboard USB, no programmer needed. |
+| ESP32-S3 **N8R2** dev board (dual USB-C) | Controller. 8 MB flash, 2 MB quad PSRAM. Arduino: PSRAM "QSPI PSRAM" (or Disabled), Flash Size 8MB. Flash via the COM port. |
+| Mini pan-tilt kit with 2 × SG90 | MG90S (metal gears) are drop-in spares. |
+| KY-008 laser, 650 nm, ≤5 mW | Driven through an NPN low-side switch (Q1). |
+| Q1: small NPN transistor, TO-92 | We used an **S9014**; an S8050 (500 mA) or 2N2222 works the same. Check the pinout (often E-B-C). PNP parts (S9012, S8550, 2N3906) won't work. The laser draws ~30-40 mA. The schematic says 2N2222A; the wiring is the same. |
+| 1.54" 240 × 240 ST7789 TFT (SPI) | Status display. Get the version on a small PCB with 8 header pins. |
+| 20000 mAh 22.5 W power bank | Its USB-A port → USB-A-to-C cable → USB-C breakout (J1) on the carrier's 5 V rail. |
+| USB-C breakout **with 5.1 kΩ on CC1 and CC2** ("5V sink" board) | Plain socket boards with no resistors give 0 V from a C-to-C cable. |
+| Mic + speaker | Paired to the laptop, not the boards. A 2.4 GHz lav mic has the lowest latency. |
+| 1 kΩ, 10 kΩ, 470-1000 µF (≥10 V), 100 nF, perfboard, headers, jumpers | 1 kΩ = laser base resistor, 10 kΩ = base pulldown (laser off during boot), the big capacitor goes at the servo plugs. |
+| 4.8 V NiMH pack (optional) | Backup servo-only power if the boards brown out (see the schematic). |
 
 ## Pins (ESP32-S3)
 
@@ -21,7 +22,7 @@
 |---|---|
 | 4 | Pan servo signal |
 | 5 | Tilt servo signal |
-| 6 | Laser, via 1 kΩ to the 2N2222 base |
+| 6 | Laser, via 1 kΩ to the Q1 base |
 | 7 | TFT backlight (BLK) |
 | 8 | TFT reset (RES) |
 | 9 | TFT data/command (DC) |
