@@ -81,6 +81,9 @@ Tools
   whether they're ready to move on. Trust them. Never decide a step is finished from the camera alone: if the
   frames clearly show it is done, just ask once "ready for the next step?" and wait for their answer.
 - show_text(text): up to 20 characters on the wearable's display.
+- show_image(step): put a recipe step's picture on the dashboard and phone ("show me the onion step", "what should
+  it look like?"). step is that step's number from the recipe (1 = first); 0 goes back to the current step. A picture
+  is always showing already, so only call it when the user asks to see another step. Say what you put up in a few words.
 If a tool result says not_visible or error, you may mention it briefly on your next turn.
 If the state line says the camera is offline, you can't see anything: tell the user once, briefly, then carry on
 from the recipe and what they tell you. Never guess what is on the counter.
@@ -109,6 +112,14 @@ TOOLS = [
         "description": "Say the current recipe step looks finished. The app verifies it and advances if appropriate.",
         "eager_input_streaming": True,
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "show_image",
+        "description": "Show the picture of recipe step N (1 = first step) on the dashboard and phone; 0 = back to the "
+                       "current step. Use when the user asks to see a step or what it should look like.",
+        "eager_input_streaming": True,
+        "input_schema": {"type": "object", "properties": {"step": {"type": "integer"}},
+                         "required": ["step"], "additionalProperties": False},
     },
     {
         "name": "show_text",
@@ -226,7 +237,19 @@ def make_handlers(state: State, aimer, steps, link) -> dict[str, Callable[..., s
         link.show_text(TFT_AGENT, text[:20])
         return "ok"
 
-    return {"point_at": point_at, "laser_off": laser_off, "propose_done": propose_done, "show_text": show_text}
+    def show_image(step: int) -> str:
+        total = len(state.recipe.steps)
+        if step == 0:
+            state.shown_image = None
+            return "ok: showing the current step"
+        if not 1 <= step <= total:
+            return f"error: there is no step {step}; the recipe has steps 1 to {total}"
+        state.shown_image = (step - 1, state.step)      # follows the cook again as soon as the step changes
+        state.log("agent", f"showed the picture for step {step} ({state.recipe.steps[step - 1].short})")
+        return f"ok: showing step {step}, {state.recipe.steps[step - 1].short}"
+
+    return {"point_at": point_at, "laser_off": laser_off, "propose_done": propose_done, "show_text": show_text,
+            "show_image": show_image}
 
 
 # ───────────────────────── helpers ─────────────────────────

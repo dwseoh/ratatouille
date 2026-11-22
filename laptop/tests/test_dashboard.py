@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coach import dashboard
-from coach.contracts import FakeFrames, Recipe, State, TurnLatency, fake_dets
+from coach.contracts import Det, FakeFrames, Recipe, State, TurnLatency, fake_dets
 
 RECIPE = Recipe.load(Path(__file__).resolve().parent.parent / "recipes" / "guacamole.json")
 
@@ -36,7 +36,10 @@ class Agent:
 
 def test_snapshot_has_everything_the_page_needs():
     snap = dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent())
-    assert snap["step"] == {"n": 3, "total": 7, "short": RECIPE.steps[2].short, "goal": RECIPE.steps[2].goal}
+    step = RECIPE.steps[2]
+    assert snap["step"] == {"n": 3, "total": 7, "short": step.short, "goal": step.goal, "how": list(step.how),
+                            "tips": list(step.tips), "image_url": "/recipe-image/2", "image_step": 3,
+                            "image_real": False, "image_note": ""} and snap["recipe"] == RECIPE.name
     assert snap["transcript"] == "how chunky should it be" and snap["speaking"] is True
     assert snap["laser"] == {"target": "fork", "on_target": True}
     assert "avocado" in snap["visible"] and len(snap["events"]) == dashboard.EVENTS_SHOWN
@@ -195,3 +198,84 @@ def test_both_themes_are_readable_wcag_aa():
 def test_the_options_are_keyboard_accessible_buttons():
     page = dashboard.PAGE
     assert "<button" in page and ".opt:focus-visible" in page and "aria-pressed" in page
+
+
+# ───────────── visuals: step photo, checklist, phone page, QR ─────────────
+
+def _photo_root(tmp_path, step=None):
+    d = tmp_path / "images" / "guacamole"
+    d.mkdir(parents=True)
+    (d / ("hero.jpg" if step is None else f"step-{step}.jpg")).write_bytes(b"\xff\xd8\xff\xe0JFIFfake")
+    return tmp_path
+
+
+def test_an_image_is_always_up_step_photo_then_dish_photo_then_a_card(tmp_path):
+    st = fake_state()
+    snap = dashboard.snapshot(st, recipes_root=tmp_path)["step"]
+    assert snap["image_url"] == "/recipe-image/2" and snap["image_real"] is False         # nothing at all: a card
+    _photo_root(tmp_path)                                                       # hero.jpg only
+    snap = dashboard.snapshot(st, recipes_root=tmp_path)["step"]
+    assert snap["image_url"].startswith("/recipe-image/2?v=") and snap["image_real"] is True   # dish photo
+    _photo_root_step = tmp_path / "images" / "guacamole" / "step-3.jpg"
+    _photo_root_step.write_bytes(b"\xff\xd8\xff\xe0JFIFstep")
+    assert dashboard.snapshot(st, recipes_root=tmp_path)["step"]["image_url"].startswith("/recipe-image/2?v=")
+
+
+def test_recipe_image_route_serves_the_photo_dish_photo_or_a_card(tmp_path):
+    st = fake_state()
+    client = TestClient(dashboard.build_app(st, FakeFrames(), Link(), Agent(), recipes_root=tmp_path))
+    r = client.get("/recipe-image/2")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/svg+xml" and b"Step 3" in r.content
+    _photo_root(tmp_path, step=3)
+    r = client.get("/recipe-image/2")
+    assert r.status_code == 200 and r.content.startswith(b"\xff\xd8") and r.headers["cache-control"] == "no-cache"
+    assert client.get("/recipe-image/99").status_code == 404
+    assert client.get("/recipe-image/..%2F..%2Fsecret").status_code in (404, 422)          # no client-chosen paths
+
+
+def test_a_shown_image_overrides_the_current_step_until_the_step_changes(tmp_path):
+    st = fake_state()
+    st.shown_image = (0, st.step)
+    snap = dashboard.snapshot(st, recipes_root=tmp_path)["step"]
+    assert snap["image_url"].startswith("/recipe-image/0") and snap["image_step"] == 1
+    assert snap["image_note"] == f"Showing step 1: {RECIPE.steps[0].short}"
+    st.step += 1                                                                # the cook moved on: back to following them
+    snap = dashboard.snapshot(st, recipes_root=tmp_path)["step"]
+    assert snap["image_step"] == st.step + 1 and snap["image_note"] == ""
+
+
+def test_cook_page_and_info_and_qr(tmp_path):
+    client = TestClient(dashboard.build_app(fake_state(), FakeFrames(), Link(), Agent(), recipes_root=tmp_path))
+    page = client.get("/cook")
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"]
+    for needle in ("/state", "wireOptions()", 'id="optTheme"', 'id="optFont"', "OpenDyslexic", 'id="how"', 'id="photo"',
+                   "viewport"):
+        assert needle in page.text, needle
+    assert "%%" not in page.text                                                # every template slot was filled
+    info = client.get("/info").json()
+    assert info["cook_url"].endswith("/cook") and info["cook_url"].startswith("http://")
+    qr = client.get("/cook-qr.svg")
+    if info["qr"]:
+        assert qr.status_code == 200 and qr.headers["content-type"] == "image/svg+xml" and b"<svg" in qr.content
+    else:
+        assert qr.status_code == 404
+
+
+def test_dashboard_page_has_the_step_card_photo_and_phone_link_and_no_template_leftovers():
+    page = dashboard.PAGE
+    for needle in ('id="stepimg"', 'id="how"', 'id="qr"', 'id="cookurl"', "How to do this step", "wireOptions()", "/info"):
+        assert needle in page, needle
+    assert "%%" not in page
+
+
+def test_the_laser_target_is_much_more_visible_than_the_other_boxes():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    dets = [Det("lime", 0.9, (100, 100, 200, 200)), Det("bowl", 0.9, (300, 100, 400, 200))]
+    plain = dashboard.annotate(frame, dets, None, None)
+    aimed = dashboard.annotate(frame, dets, None, "lime")
+    def lit(img, box):                                          # non-black pixels around a box (incl. label above)
+        x1, y1, x2, y2 = box
+        return int((img[max(y1 - 40, 0):y2 + 10, x1 - 10:x2 + 10].sum(axis=2) > 0).sum())
+    assert lit(aimed, (100, 100, 200, 200)) > 3 * lit(plain, (100, 100, 200, 200))             # thick box + big label
+    assert (aimed[100:200, 100:200, 1] == 200).any() and not (aimed[100:200, 100:200, 2] == 200).any()   # green, not red
+    assert lit(aimed, (300, 100, 400, 200)) == lit(plain, (300, 100, 400, 200))                # others unchanged

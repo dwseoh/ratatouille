@@ -10,6 +10,7 @@ pipecat-ai[deepgram,silero,local]==1.16.0  # needs `brew install portaudio`; use
 pytest
 pytest-timeout
 rapidfuzz==3.14.6
+segno  # optional: QR code on the dashboard that opens the phone page
 sentence-transformers==6.3.0  # intent router embeddings (all-MiniLM-L6-v2, ~80 MB download on first run)
 clip @ git+https://github.com/ultralytics/CLIP.git@7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40  # YOLO-World set_classes text encoder (ultralytics would auto-install it at runtime otherwise)
 ftfy

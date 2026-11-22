@@ -159,6 +159,22 @@ def test_validate_tool_input():
     assert "string" in validate_tool_input("point_at", {"name": 3})
     assert "not an object" in validate_tool_input("point_at", "lime")
     assert "unknown" in validate_tool_input("set_timer", {})
+    assert validate_tool_input("show_image", {"step": 3}) is None
+    assert "integer" in validate_tool_input("show_image", {"step": "3"})
+    assert "missing" in validate_tool_input("show_image", {})
+
+
+def test_show_image_puts_a_steps_picture_up_until_the_cook_moves_on():
+    agent, st, client, aimer = make_agent(FakeStream([]))
+    show = agent.handlers["show_image"]
+    assert show(step=2).startswith("ok") and st.image_step == 1 and st.step == 0
+    assert any("showed the picture for step 2" in e.text for e in st.events)
+    st.step = 1                                                  # cook moves on -> follows the current step again
+    assert st.image_step == 1 and st.shown_image == (1, 0)
+    st.step = 3
+    assert st.image_step == 3
+    assert show(step=0).startswith("ok") and st.shown_image is None
+    assert show(step=99).startswith("error") and show(step=-1).startswith("error") and st.shown_image is None
 
 
 # ───────────── a turn ─────────────

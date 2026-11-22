@@ -47,6 +47,7 @@ class Step:
     point: list[str]            # objects the laser shows when the step starts (in order)
     done_when: str              # what the camera should see when it's finished
     fallback: str               # canned line, spoken only if the API is down/slow
+    image: str = ""             # optional "what it should look like" photo, relative to recipes/ (default: by convention)
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,7 @@ class State:
     events: list[Event] = field(default_factory=list)   # writer: anyone, via log() only
     turns: list[TurnLatency] = field(default_factory=list)  # writer: telemetry (B)
     last_activity: float = field(default_factory=time.monotonic)  # writer: voice (B), user or coach spoke
+    shown_image: tuple[int, int] | None = None   # writer: show_image tool (C): (step whose picture to show, step it was asked on)
 
     def log(self, source: EventSource, text: str) -> None:
         self.events.append(Event(time.time(), source, text))
@@ -155,6 +157,14 @@ class State:
     @property
     def current_step(self) -> Step:
         return self.recipe.steps[self.step]
+
+    @property
+    def image_step(self) -> int:
+        """Which step's picture the dashboard shows: the one the user asked for ("show me the onion step"), but only
+        while the recipe is still on the step it was asked on; otherwise the current step."""
+        if self.shown_image and self.shown_image[1] == self.step:
+            return self.shown_image[0]
+        return self.step
 
     def visible(self) -> set[str]:
         """Object names YOLO currently sees (smoothed by the detector)."""

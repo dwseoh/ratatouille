@@ -90,6 +90,10 @@ Tests: add to `test_agent.py`; try them in `agent_cli`.
 Why: Remy only speaks. A lot of the target audience learns visually. Everything here is prepared ahead of time and local,
 so it adds no latency to a turn. Guacamole stays hand-made and hand-checked.
 
+**Status (done by Claude): 7a and 7b are built and tested, plus the `show_image` tool (7c, step pictures only; chosen by step number, always falls back to the dish photo or a card). Not built: dashboard import box, YouTube links. Still yours: take the step photos (7a.3), and get the
+team's OK on the additive `Step.image` field (7a.4: it is already in `contracts.py`, defaulting to "", so nothing else breaks).
+How to test: `docs/roles/C-qa.md` section 4b.**
+
 **7a. Visuals in the dashboard (do first; small, part of the dashboard)**
 1. Step card: big current step, a "what it should look like" photo, and the `how` list as a short checklist. Steps without a picture show the hero image or nothing.
 2. Highlight the laser target in the live feed (already what `annotate()` does), so people who can't spot the dot can see it on screen.
