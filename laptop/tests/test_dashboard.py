@@ -34,8 +34,8 @@ class Agent:
     recent_sentences = ["Press down with the fork.", "Leave it a bit chunky."]
 
 
-def test_snapshot_has_everything_the_page_needs():
-    snap = dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent())
+def test_snapshot_has_everything_the_page_needs(tmp_path):      # empty recipes folder: the real photos must not matter
+    snap = dashboard.snapshot(fake_state(), FakeFrames(), Link(), Agent(), recipes_root=tmp_path)
     step = RECIPE.steps[2]
     assert snap["step"] == {"n": 3, "total": 7, "short": step.short, "goal": step.goal, "how": list(step.how),
                             "tips": list(step.tips), "image_url": "/recipe-image/2", "image_step": 3,
