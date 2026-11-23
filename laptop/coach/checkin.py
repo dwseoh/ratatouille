@@ -1,4 +1,4 @@
-"""Check-ins (B3a): what makes the coach talk on its own. One normal agent turn with fresh frames, no second model.
+"""Check-ins: what makes the coach talk on its own. One normal agent turn with fresh frames, no second model.
 
 Two triggers
   - step intro:  a step just started (Steps.on_change) -> after a second of quiet, introduce it and point at

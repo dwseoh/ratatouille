@@ -1,4 +1,4 @@
-"""Live end-to-end check of the agent (B1) against the REAL Anthropic API. Costs a few cents.
+"""Live end-to-end check of the agent against the REAL Anthropic API. Costs a few cents.
 
     .venv/bin/python tools/live_agent_check.py
 

@@ -11,7 +11,7 @@ refits with them. All the logic (grid, session, fit + save gate, auto sweep, ver
     python -m coach.calib_web --cam 0 --ctl 127.0.0.1      # webcam + tools/fake_s3.py
     python -m coach.calib_web                              # ESP cam + S3 (CAM_URL / CTL_HOST)
 
-For C's dashboard (one FastAPI app, same event loop as the link):
+For the dashboard (one FastAPI app, same event loop as the link):
     from coach.calib_web import mount
     calib = mount(app, link, frames, prefix="/calib")      # page at /calib/
     asyncio.create_task(calib.watchdog())                   # from startup: laser off when the page goes away

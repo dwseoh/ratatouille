@@ -10,19 +10,19 @@
     python -m coach.main --fake-agent                        # echo agent, no Anthropic key needed
     python -m coach.main --closed-loop                       # stretch: dot finder + closed-loop correction
     python -m coach.main --button                            # BOOT button: start / pause / resume
-    python -m coach.main --no-checkins --no-dashboard        # leave out C's check-ins / the dashboard server
+    python -m coach.main --no-checkins --no-dashboard        # leave out the check-ins / the dashboard server
 
 Who does what at runtime:
-    FrameGrabber (A, thread)  -> frames for YOLO, the agent and calibration
-    DetectorThread (B, thread) -> YOLO on the newest frame, 2-of-3 smoothing -> State.dets
-    Aimer.run    (A, 30 Hz)   -> State.dets + calibration -> link.pan/tilt/laser
-    ControlLink  (A, 30 Hz)   -> UDP to the S3
-    voice        (B, Pipecat) -> intents (fast point/done/stop) + agent turns (C) -> TTS
-    Watcher      (C, loop 3)  -> event log, "looks done, next step?" asks (voice mode only)
-    CheckIns     (C)          -> the coach speaks up on its own: step intros + a comment after a quiet spell
-    Timers       (C)          -> the agent's set_timer: "time's up" through the speech queue when it's quiet
-    Dashboard    (C)          -> http://<laptop>:8000: live feed, step, captions, event log, latency (judges)
-    Session      (B)          -> "hey Remy" starts, "pause" / "I'm back" pause and resume, "start over" resets
+    FrameGrabber (thread)     -> frames for YOLO, the agent and calibration
+    DetectorThread (thread)   -> YOLO on the newest frame, 2-of-3 smoothing -> State.dets
+    Aimer.run    (30 Hz)      -> State.dets + calibration -> link.pan/tilt/laser
+    ControlLink  (30 Hz)      -> UDP to the S3
+    voice        (Pipecat)    -> intents (fast point/done/stop) + agent turns -> TTS
+    Watcher                   -> event log, "looks done, next step?" asks (voice mode only)
+    CheckIns                  -> the coach speaks up on its own: step intros + a comment after a quiet spell
+    Timers                    -> the agent's set_timer: "time's up" through the speech queue when it's quiet
+    Dashboard                 -> http://<laptop>:8000: live feed, step, captions, event log, latency (judges)
+    Session                   -> "hey Remy" starts, "pause" / "I'm back" pause and resume, "start over" resets
 Nothing here blocks the event loop: YOLO and frames each run in their own thread.
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ def load_calibration(path: Path = CALIB_PATH) -> Calibration | None:
 
 
 def make_steps(state: State, link=None):
-    """C's step machine (it shows the step on TFT line 2 itself), else FakeSteps (always advances)."""
+    """The real step machine (it shows the step on TFT line 2 itself), else FakeSteps (always advances)."""
     try:
         from .steps import Steps
         return Steps(state, link, pushback=cfg.pushback_done)
@@ -180,7 +180,7 @@ async def type_loop(app: "App", lines=None) -> None:
     """--type: keyboard instead of the voice pipeline. Same fast intents, then an agent turn.
     `lines` (a list) is for tests; otherwise reads stdin until an empty line / Ctrl-D."""
     from .contracts import Intent
-    from .intents import IntentRouter, allowed_while_paused   # B's router, as in voice mode (strict STOP, fuzzy names)
+    from .intents import IntentRouter, allowed_while_paused   # the same router as voice mode (strict STOP, fuzzy names)
     router = IntentRouter(app.state.recipe, use_embeddings=not lines)   # tests (lines=...) skip the model
     it = iter(lines) if lines is not None else None
     if app.state.session == "idle":
@@ -305,7 +305,7 @@ class App:
         self.detector = DetectorThread(detector, self.frames, self.state, asyncio.get_running_loop()).start()
 
     def _start_watcher(self) -> None:
-        """C's watcher (loop 3): event log and "step done?" asks. Needs the voice pipeline."""
+        """The watcher: event log and "step done?" asks. Needs the voice pipeline."""
         from .watcher import Watcher
         w = Watcher(cfg, self.state, self.frames, self.speech, self.steps,
                     on_ask=self.speech.agent_turn, busy=lambda: self.agent.busy,
@@ -315,7 +315,7 @@ class App:
         self._spawn(w.run(), "watcher")
 
     def _start_checkins(self) -> None:
-        """C's check-ins: the coach speaks up on its own. Voice: through the pipeline (barge-in cancels it)."""
+        """Check-ins: the coach speaks up on its own. Voice: through the pipeline (barge-in cancels it)."""
         if self.args.no_checkins or self.args.fake_agent:
             return
         from .checkin import CheckIns
@@ -332,7 +332,7 @@ class App:
         self._spawn(self.timers.run(self.speech.say, quiet), "timers")
 
     def _start_dashboard(self) -> None:
-        """C's dashboard on 0.0.0.0:DASHBOARD_PORT. Never takes the app down (missing package, port in use)."""
+        """The dashboard on 0.0.0.0:DASHBOARD_PORT. Never takes the app down (missing package, port in use)."""
         if self.args.no_dashboard:
             return
         try:
@@ -447,7 +447,7 @@ def parse_args(argv=None):
     ap.add_argument("--say", action="store_true", help="with --type: speak replies with macOS `say`")
     ap.add_argument("--fake-agent", action="store_true", help="echo agent, no API key needed")
     ap.add_argument("--button", action="store_true", help="BOOT button starts / pauses / resumes the session")
-    ap.add_argument("--no-watcher", action="store_true", help="don't run C's watcher (loop 3)")
+    ap.add_argument("--no-watcher", action="store_true", help="don't run the watcher")
     ap.add_argument("--no-checkins", action="store_true", help="the coach never speaks unprompted")
     ap.add_argument("--no-dashboard", action="store_true", help="don't start the dashboard web server")
     ap.add_argument("--closed-loop", action="store_true",

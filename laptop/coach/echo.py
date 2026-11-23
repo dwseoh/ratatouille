@@ -1,4 +1,4 @@
-"""Echo gate (B, checkpoint 4): the always-on mic hears the coach's own voice from the speaker.
+"""Echo gate: the always-on mic hears the coach's own voice from the speaker.
 
 While the coach is speaking, and for `tail_s` after it stops (Bluetooth speakers lag ~0.2 s), the gate is
 CLOSED: user speech is ignored, except a stop word ("stop", "wait", "hold on"...) or a pause phrase ("give me a

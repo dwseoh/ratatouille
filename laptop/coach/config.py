@@ -30,15 +30,15 @@ class Config:
     ctl_port: int = int(_env("CTL_PORT", "4210"))
     control_hz: float = 30.0
 
-    # Claude. Default = Opus 5.5 low effort + fast mode: it won the B0 bake-off (first sentence ~1.2 s median
-    # vs ~2 s for Haiku and standard Opus; see docs). Set CLAUDE_MODEL=claude-haiku-5-5 CLAUDE_FAST=0 for the
-    # cheap option (~76x cheaper per request, ~0.4 s slower).
+    # Claude. Default = Opus 5.5 low effort + fast mode: it won the model bake-off (tools/bench_llm.py; first
+    # sentence ~1.2 s median vs ~2 s for Haiku and standard Opus; see docs). Set CLAUDE_MODEL=claude-haiku-5-5
+    # CLAUDE_FAST=0 for the cheap option (~76x cheaper per request, ~0.4 s slower).
     model: str = _env("CLAUDE_MODEL", "claude-opus-5-5")
     # COACH_EFFORT, not CLAUDE_EFFORT: Claude Code sets CLAUDE_EFFORT in its own shell, and a shell variable beats .env.
     effort: str = _env("COACH_EFFORT", "low")
     # Opus 5.5 "fast mode": same model, faster output, 2x price ($8/$40 per MTok). Ignored by other models.
     fast: bool = _env("CLAUDE_FAST", "1").lower() in ("1", "true", "yes")
-    # B5: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
+    # Fallback: no first token (text or tool call) within this long -> speak the step's canned line. Opus fast is
     # usually under 1.5 s but has an occasional slow turn; Haiku is steadier, so 3 is enough there.
     first_token_timeout_s: float = float(_env("FIRST_TOKEN_TIMEOUT_S", "5.0"))
     # If the main model gives no first token in time, retry ONCE on this faster model before falling back to the
@@ -52,11 +52,11 @@ class Config:
     # Accessibility: start in plain-language mode (short sentences, one action each, no idioms or numbers).
     # Users can also say "say it simpler" / "too fast" during the session.
     plain_language: bool = _env("PLAIN_LANGUAGE", "0").lower() in ("1", "true", "yes")
-    watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # B3: cheap model that reads frames in the background
+    watcher_model: str = _env("WATCHER_MODEL", "claude-haiku-5-5")   # cheap model, reads frames in the background
     frames_per_turn: int = 3         # images sent with each voice turn
     frame_max_px: int = 512           # downscale before sending
 
-    # Voice (V1). Deepgram streaming STT + Aura TTS through Pipecat.
+    # Voice. Deepgram streaming STT + Aura TTS through Pipecat.
     deepgram_api_key: str = _env("DEEPGRAM_API_KEY", "")
     tts_voice: str = _env("TTS_VOICE", "aura-2-helena-en")
     vad_stop_secs: float = float(_env("VAD_STOP_SECS", "0.2"))   # pause that triggers the smart-turn check

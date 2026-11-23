@@ -106,7 +106,7 @@ def test_unknown_and_invisible_objects():
 
 @pytest.mark.timeout(10)
 def test_yolo_runs_in_detector_thread_with_smoothing(monkeypatch):
-    """Without --no-yolo the app runs B's DetectorThread (2-of-3 smoothing, imgsz from cfg), the loop stays
+    """Without --no-yolo the app runs the DetectorThread (2-of-3 smoothing, imgsz from cfg), the loop stays
     responsive while YOLO blocks, and shutdown stops the thread."""
     import coach.vision as vision
 

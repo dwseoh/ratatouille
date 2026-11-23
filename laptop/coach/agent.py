@@ -1,6 +1,6 @@
-"""Claude agent for voice turns (contract C6): streams text sentence by sentence, calls local tools.
+"""Claude agent for voice turns (AgentAPI): streams text sentence by sentence, calls local tools.
 
-Latency notes (see docs/architecture.md, docs/agent-notes.md):
+Latency notes (see docs/architecture.md):
 - the system prompt + recipe (numbered text, context.render_recipe) + tool list are a stable, cached prefix
   (`prewarm()` warms it at startup)
 - a second cache breakpoint sits on the last block of the kept history, so each turn reads the whole earlier
@@ -11,7 +11,7 @@ Latency notes (see docs/architecture.md, docs/agent-notes.md):
   user turn, so a tool never costs a second round trip. Hence no "lookup" tools: everything the model needs to
   answer (recipe, positions, timers, notes) is already in the prompt.
 - barge-in: `cancel()` aborts the HTTP stream; sentences not yet handed to TTS are discarded
-- fallbacks (B5): no first token in FIRST_TOKEN_TIMEOUT_S -> retry ONCE on the backup model (Haiku, BACKUP_MODEL,
+- fallbacks: no first token in FIRST_TOKEN_TIMEOUT_S -> retry ONCE on the backup model (Haiku, BACKUP_MODEL,
   with its own shorter deadline); still nothing, or an API error, a refusal or missing credentials -> speak the
   step's canned `fallback` line (once per step; after that "Sorry, give me a second."), set `TurnStats.error`
   and log a system event. No camera frames -> the state note says "camera offline".
@@ -289,7 +289,7 @@ def validate_tool_input(name: str, inp) -> str | None:
 
 
 def make_handlers(state: State, aimer, steps, link, *, timers=None, session=None) -> dict[str, Callable[..., str]]:
-    """Tool name -> callable(**input) -> short result text. Built from the C3/C7/C1 interfaces.
+    """Tool name -> callable(**input) -> short result text. Built from the Aimer, Steps and ControlLink interfaces.
 
     `timers` is a timers.Timers. `session` is the Session, or a zero-arg callable returning it (it is built after the
     agent in voice mode). Without them those tools answer with an error the model can relay."""
@@ -547,7 +547,7 @@ def _describe(e: BaseException) -> str:
 # ───────────────────────── the agent ─────────────────────────
 
 class Agent:
-    """C6 AgentAPI. `handlers` is tool name -> callable(**input) -> str (see make_handlers)."""
+    """AgentAPI. `handlers` is tool name -> callable(**input) -> str (see make_handlers)."""
 
     def __init__(self, cfg, state: State, handlers: dict[str, Callable[..., str]], client=None):
         self.cfg, self.state, self.handlers = cfg, state, handlers

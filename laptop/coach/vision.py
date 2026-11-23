@@ -1,6 +1,6 @@
-"""Perception: YOLO-World object boxes (B) + red laser dot (A).
+"""Perception: YOLO-World object boxes + red laser dot.
 
-Detector side (B, P3):
+Detector side:
 - `Detector`: YOLO-World with the recipe objects + "hand" as classes, per-class confidence thresholds.
 - `Smoother`: an object counts as visible if seen in 2 of the last 3 frames; reports its newest boxes.
 - `DetectorThread`: runs the detector in a worker thread on `frames.latest()` only (never a backlog),
@@ -148,7 +148,7 @@ class DetectorThread:
             self.fps = 1 / dt if not self.fps else 0.9 * self.fps + 0.1 / dt
 
 
-# ── Laser dot (A, stretch). Everything below is dw127's; the blink check + State.dot writer is in dot.py. ──
+# ── Laser dot (stretch). Everything below is dw127's; the blink check + State.dot writer is in dot.py. ──
 # A laser dot = a small blown-out spot (the sensor saturates) that is either near-white with a red halo
 # around it, or saturated red and much brighter than what's around it. Thresholds are for a 640-wide frame;
 # tune under venue light.

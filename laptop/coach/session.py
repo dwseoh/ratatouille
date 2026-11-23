@@ -1,4 +1,4 @@
-"""Session (B, contracts C13): idle -> "hey Remy" -> active <-> paused. "Start over" -> reset to idle.
+"""Session (SessionAPI): idle -> "hey Remy" -> active <-> paused. "Start over" -> reset to idle.
 
 Start: while idle the coach only listens for the wake phrase ("hey Remy", fuzzy: "hi remi", "okay rémy"...).
   It's matched on interim transcripts, so the rising chime plays while you're still talking. When the

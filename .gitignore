@@ -17,3 +17,4 @@ _autosave-*
 *.lck
 laptop/runs/
 laptop/datasets/
+.history/

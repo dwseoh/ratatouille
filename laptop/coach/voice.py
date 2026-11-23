@@ -1,7 +1,7 @@
-"""Voice (B): mic -> Silero VAD -> Deepgram STT -> smart-turn -> AgentProcessor -> Deepgram Aura TTS -> speaker.
+"""Voice: mic -> Silero VAD -> Deepgram STT -> smart-turn -> AgentProcessor -> Deepgram Aura TTS -> speaker.
 
 Built on Pipecat 1.16 (pinned in requirements.txt). Implements SpeechAPI from contracts.py and is the
-seam to C's AgentAPI. Pipecat is NOT used for the LLM: `AgentProcessor` hands each finished user
+seam to the AgentAPI. Pipecat is NOT used for the LLM: `AgentProcessor` hands each finished user
 utterance to `agent.turn(text, frames.recent(3), on_sentence)`, and every sentence it passes to
 `on_sentence` becomes a TTS frame at once.
 
@@ -322,7 +322,7 @@ class CaptionTap(FrameProcessor):
 
 
 class Speech:
-    """SpeechAPI (contracts C5) on top of the running pipeline. C's agent and check-ins call this.
+    """SpeechAPI (contracts.py) on top of the running pipeline. The agent and check-ins call this.
 
     Priorities (say):
       SAFETY    cuts whatever is playing (and the running agent turn), then speaks at once.

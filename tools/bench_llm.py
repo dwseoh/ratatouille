@@ -1,4 +1,4 @@
-"""B0 model bake-off: which model says its first words fastest?
+"""Model bake-off: which model says its first words fastest?
 
 Sends the SAME request (system prompt + recipe + 3 camera frames + one question) to each candidate
 model several times and prints a table of timings. The agent's real prompt and image resizing are

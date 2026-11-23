@@ -1,4 +1,4 @@
-"""S1 telemetry: one JSON line per settled turn in logs/latency.jsonl."""
+"""Telemetry: one JSON line per settled turn in logs/latency.jsonl."""
 import asyncio
 import json
 from pathlib import Path

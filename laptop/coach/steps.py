@@ -1,4 +1,4 @@
-"""Step machine (contract C7): the ONLY code that changes `State.step`.
+"""Step machine (StepsAPI): the ONLY code that changes `State.step`.
 
 Three things can say "this step is finished", and they can disagree:
 
@@ -21,7 +21,7 @@ proposals within DEBOUNCE_S of the previous user/llm decision just repeat that v
 advances two steps and a push-back isn't undone by the second call.
 
 Every change updates the TFT step line, restarts `State.step_since` (the step timer the agent's "stuck?" hint and
-"on this step for 3 min" use; it ignores paused time) and fires the on_change callbacks. Sync on purpose (C7): the watcher
+"on this step for 3 min" use; it ignores paused time) and fires the on_change callbacks. Sync on purpose: the watcher
 verdict comes from `verdict_provider`, which must return the latest CACHED verdict and never block.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ PUSHBACK_CONF = 0.6     # the watcher must be at least this sure that the step i
 
 @dataclass(frozen=True)
 class StepVerdict:
-    """What the watcher (B3) thinks of the current step."""
+    """What the watcher thinks of the current step."""
     done: bool
     confidence: float = 1.0
     note: str = ""              # why, in plain words: "I still see whole avocados"
@@ -48,7 +48,7 @@ VerdictProvider = Callable[[int], "StepVerdict | None"]    # step index -> lates
 
 
 class Steps:
-    """StepsAPI implementation. `link` and `verdict_provider` are optional (tests, before B3 exists)."""
+    """StepsAPI implementation. `link` and `verdict_provider` are optional (tests, or running without the watcher)."""
 
     def __init__(self, state: State, link: ControlLinkAPI | None = None,
                  verdict_provider: VerdictProvider | None = None, clock: Callable[[], float] = time.monotonic,

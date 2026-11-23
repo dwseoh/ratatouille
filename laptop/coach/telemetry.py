@@ -1,8 +1,8 @@
-"""Latency telemetry (B, S1 / contracts C9): one JSON line per user turn in logs/latency.jsonl.
+"""Latency telemetry (TurnLatency in contracts.py): one JSON line per user turn in logs/latency.jsonl.
 
 Each `TurnLatency` in State.turns (created by voice.AgentProcessor at the end of a user turn) collects
-marks from several owners: speech_end + first_audio (B, voice), first_token (C, agent), point_called
-(B intents / C agent tool), on_target (A, closed loop). They arrive at different times, so a turn is
+marks from several places: speech_end + first_audio (voice), first_token (agent), point_called
+(intents / agent tool), on_target (closed loop). They arrive at different times, so a turn is
 written once it has settled:
   - SETTLE_S after its first audio (late marks like on_target have landed by then), or
   - a newer turn exists (the user moved on), or

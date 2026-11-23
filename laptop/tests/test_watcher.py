@@ -444,7 +444,7 @@ def test_ignored_camera_means_no_looking_no_verdicts_no_questions():
         await run_check(w)
         assert len(client.requests) == 1 and w.latest_verdict(0) is not None
         flag["ignored"] = True
-        assert w.latest_verdict(0) is None                         # B2 must not push back on a covered camera's say-so
+        assert w.latest_verdict(0) is None                         # no push-back on a covered camera's say-so
         w._pending_ask = (st.step, "[check-in: ready?]")
         clk.t += 100
         st.dets = [Det("lime", 0.9, (0, 0, 10, 10))]

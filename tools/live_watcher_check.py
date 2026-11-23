@@ -1,4 +1,4 @@
-"""Live check of the watcher (B3) against the REAL API with the photos in tools/test_frames. Costs a few cents.
+"""Live check of the watcher against the REAL API with the photos in tools/test_frames. Costs a few cents.
 
     .venv/bin/python tools/live_watcher_check.py
 

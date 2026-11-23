@@ -1,4 +1,4 @@
-"""What the agent knows each turn (C): the [state ...] note, and the recipe as the system prompt shows it.
+"""What the agent knows each turn: the [state ...] note, and the recipe as the system prompt shows it.
 
 Two halves, split by how often they change (prompt caching is a prefix match, see agent.py):
 - `render_recipe()` goes into the cached system prompt once: the whole recipe as numbered plain text (step numbers

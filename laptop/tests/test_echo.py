@@ -1,4 +1,4 @@
-"""Echo gate (checkpoint 4): the coach's own voice in the mic must not start turns, fire intents or reach the
+"""Echo gate: the coach's own voice in the mic must not start turns, fire intents or reach the
 agent; a stop word over the coach still cuts it. Plus picking audio devices by name."""
 import asyncio
 

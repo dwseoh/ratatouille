@@ -1,7 +1,7 @@
 """Shared interfaces between the three of us. Code against THESE, not against each other's files.
 
 Rules
-- Frozen after K0. To change something here: post in the team channel and get a 👍 from whoever it affects.
+- Frozen early on. To change something here: post in the team channel and get a 👍 from whoever it affects.
 - Every interface has a Fake at the bottom, so you can build and test your part alone.
 - One writer per State field (see State). Everyone may read everything.
 - Only touch State from the asyncio loop. Threads (YOLO, frame grabber) hand results back with
@@ -14,10 +14,10 @@ Who builds what (A = dw127, B = Hanjing, C = Chloe)
 
 Smoke test (should print a fake turn):  cd laptop && python -m coach.contracts
 
-Additive changes after K0 (nothing removed or renamed; old code keeps working):
+Additive changes since the freeze (nothing removed or renamed; old code keeps working):
 - Recipe: optional `servings` + `ingredients` (amounts, substitutes). Old recipe files load unchanged.
 - State: session can be "paused" (SessionAPI); new fields step_since (StepsAPI), paused_at / paused_total_s
-  (SessionAPI), timers (Timers, C), cook_notes / servings (agent tools, C); helpers cook_clock() / step_seconds().
+  (SessionAPI), timers (Timers), cook_notes / servings (agent tools); helpers cook_clock() / step_seconds().
 - Intent: PAUSE, RESUME. TOOL_NAMES lists every agent tool. FakeSteps.go_to(); KeywordRouter knows pause/resume.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ else:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C8. Recipe  (owner C; loaded once at startup, read-only after that)
+# Recipe  (loaded once at startup, read-only after that)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ class Recipe:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Vision data (C2 parts)
+# Vision data (parts of State)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass(frozen=True)
@@ -113,14 +113,14 @@ EventSource = Literal["vision", "user", "agent", "system"]
 
 @dataclass(frozen=True)
 class Event:
-    """C10. One line in the event log. Append-only: nobody edits or deletes events."""
+    """One line in the event log. Append-only: nobody edits or deletes events."""
     t: float                    # time.time()
     source: EventSource
     text: str
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C9. Latency record (owner B, but anyone with a timestamp calls mark())
+# Latency record (anyone with a timestamp calls mark())
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # The 4 v1 marks (+ optional extras). Times are time.monotonic().
@@ -148,7 +148,7 @@ class TurnLatency:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C2 + C13. State: the shared blackboard. ONE WRITER PER FIELD.
+# State: the shared blackboard. ONE WRITER PER FIELD.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 Session = Literal["idle", "active", "paused"]   # paused: the cook stepped away (step kept, coach quiet)
@@ -157,25 +157,25 @@ Session = Literal["idle", "active", "paused"]   # paused: the cook stepped away 
 @dataclass
 class State:
     recipe: Recipe
-    step: int = 0                           # writer: StepsAPI (C) only
-    dets: list[Det] = field(default_factory=list)   # writer: YOLO detector (B)
-    dot: tuple[float, float] | None = None  # writer: dot finder (A), None in open-loop v1
-    target: str | None = None               # writer: Aimer (A)
-    on_target: bool = False                 # writer: Aimer (A)
-    transcript: str = ""                    # writer: voice (B), the current/last user utterance
-    speaking: bool = False                  # writer: voice (B), True while TTS audio plays
-    user_talking: bool = False              # writer: voice (B), True while VAD hears the user
-    session: Session = "idle"               # writer: SessionAPI (B)
+    step: int = 0                           # writer: StepsAPI only
+    dets: list[Det] = field(default_factory=list)   # writer: YOLO detector
+    dot: tuple[float, float] | None = None  # writer: dot finder, None in open-loop v1
+    target: str | None = None               # writer: Aimer
+    on_target: bool = False                 # writer: Aimer
+    transcript: str = ""                    # writer: voice, the current/last user utterance
+    speaking: bool = False                  # writer: voice, True while TTS audio plays
+    user_talking: bool = False              # writer: voice, True while VAD hears the user
+    session: Session = "idle"               # writer: SessionAPI
     events: list[Event] = field(default_factory=list)   # writer: anyone, via log() only
-    turns: list[TurnLatency] = field(default_factory=list)  # writer: telemetry (B)
-    last_activity: float = field(default_factory=time.monotonic)  # writer: voice (B), user or coach spoke
-    shown_image: tuple[int, int] | None = None   # writer: show_image tool (C): (step whose picture to show, step it was asked on)
-    step_since: float = field(default_factory=time.monotonic)   # writer: StepsAPI (C): cook_clock() when this step began
-    paused_at: float | None = None          # writer: SessionAPI (B): time.monotonic() the current pause began
-    paused_total_s: float = 0.0             # writer: SessionAPI (B): seconds paused so far (finished pauses only)
-    timers: dict[str, float] = field(default_factory=dict)   # writer: Timers (C): label -> due time.monotonic()
-    cook_notes: list[str] = field(default_factory=list)      # writer: agent `remember` tool (C): facts for the session
-    servings: int = 0                       # writer: agent `set_servings` tool (C); 0 = the recipe's own amount
+    turns: list[TurnLatency] = field(default_factory=list)  # writer: telemetry
+    last_activity: float = field(default_factory=time.monotonic)  # writer: voice, user or coach spoke
+    shown_image: tuple[int, int] | None = None   # writer: show_image tool: (step whose picture to show, step it was asked on)
+    step_since: float = field(default_factory=time.monotonic)   # writer: StepsAPI: cook_clock() when this step began
+    paused_at: float | None = None          # writer: SessionAPI: time.monotonic() the current pause began
+    paused_total_s: float = 0.0             # writer: SessionAPI: seconds paused so far (finished pauses only)
+    timers: dict[str, float] = field(default_factory=dict)   # writer: Timers: label -> due time.monotonic()
+    cook_notes: list[str] = field(default_factory=list)      # writer: agent `remember` tool: facts for the session
+    servings: int = 0                       # writer: agent `set_servings` tool; 0 = the recipe's own amount
 
     def log(self, source: EventSource, text: str) -> None:
         self.events.append(Event(time.time(), source, text))
@@ -221,7 +221,7 @@ class State:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C1 + C12. Control link to the S3 (owner A)
+# Control link to the S3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 TFT_STATUS, TFT_IP, TFT_STEP, TFT_LATENCY, TFT_AGENT = 0, 1, 2, 3, 4   # display lines, 20 chars each
@@ -242,7 +242,7 @@ class ControlLinkAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C4. Frames (owner A)
+# Frames
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @runtime_checkable
@@ -254,7 +254,7 @@ class FrameSource(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C3. Aimer (owner A). B's intent router and C's agent tools call it.
+# Aimer. The intent router and the agent's tools call it.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PointResult = Literal["ok", "not_visible", "unknown_object", "out_of_reach"]   # out_of_reach: seen, but the laser can't get there
@@ -274,7 +274,7 @@ class AimerAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C5. Speech (owner B). C's agent + check-ins call say().
+# Speech. The agent + check-ins call say().
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Priority(enum.IntEnum):
@@ -295,7 +295,7 @@ class SpeechAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C14. Intent router (owner B). Local + fast (<50 ms). Runs in parallel with the agent, never before it.
+# Intent router. Local + fast (<50 ms). Runs in parallel with the agent, never before it.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Intent(str, enum.Enum):
@@ -322,7 +322,7 @@ class IntentRouterAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C6. Agent (owner C). Plain Python, knows nothing about Pipecat.
+# Agent. Plain Python, knows nothing about Pipecat.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OnSentence = Callable[[str], Awaitable[None]]
@@ -353,7 +353,7 @@ class AgentAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C7. Steps (owner C). The ONLY code that changes State.step.
+# Steps. The ONLY code that changes State.step.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 DoneSource = Literal["user", "llm", "vision"]
@@ -371,7 +371,7 @@ class StepsAPI(Protocol):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# C13. Session (owner B). idle -> BOOT press -> active. BOOT again / "start over" -> reset to idle.
+# Session. idle -> BOOT press -> active. BOOT again / "start over" -> reset to idle.
 #      active <-> paused: "pause" / "I'm back", the agent's pause tool, or BOOT with --button (see session.py).
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -496,7 +496,7 @@ class FakeSpeech:
 
 
 class FakeAgent:
-    """Echo bot: lets B test the voice pipeline before C's agent exists."""
+    """Echo bot: tests the voice pipeline without the real agent."""
 
     def __init__(self):
         self._cancelled = False
@@ -532,7 +532,7 @@ class FakeAgent:
 
 
 class FakeSteps:
-    """Always advances. Use until C's real step machine exists."""
+    """Always advances. Stands in for the real step machine (steps.py)."""
 
     def __init__(self, state: State):
         self.state = state

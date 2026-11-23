@@ -1,4 +1,4 @@
-"""Judge-facing dashboard (S2): what the coach sees, thinks and says, on one page. Runs in the same process.
+"""Judge-facing dashboard: what the coach sees, thinks and says, on one page. Runs in the same process.
 
     GET /             the dashboard page (built from laptop/frontend, served from coach/static/)
     GET /cook         the phone page: one step at a time, big text (same build)

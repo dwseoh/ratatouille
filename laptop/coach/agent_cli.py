@@ -1,4 +1,4 @@
-"""Talk to the agent by typing. No mic, speaker, S3 or YOLO needed (B1 "done when" check).
+"""Talk to the agent by typing. No mic, speaker, S3 or YOLO needed.
 
     cd laptop && python -m coach.agent_cli                 # black frames, fake detections
     python -m coach.agent_cli --webcam 0                   # real laptop webcam frames

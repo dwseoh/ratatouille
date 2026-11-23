@@ -1,4 +1,4 @@
-"""Kitchen timers (B4, C): the agent's set_timer / cancel_timer tools, and the spoken "time's up".
+"""Kitchen timers: the agent's set_timer / cancel_timer tools, and the spoken "time's up".
 
     timers = Timers(state, link)              # main builds one; the agent's tool handlers call set() / cancel()
     task = asyncio.create_task(timers.run(speech.say, quiet=lambda: ...))   # once Speech exists

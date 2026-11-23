@@ -1,6 +1,6 @@
-"""Intent router (B, V4b): the coach's reflexes. Local and fast, runs on interim transcripts.
+"""Intent router: the coach's reflexes. Local and fast, runs on interim transcripts.
 
-`IntentRouter.classify(text)` implements IntentRouterAPI (contracts C14). Cheapest check first,
+`IntentRouter.classify(text)` implements IntentRouterAPI (contracts.py). Cheapest check first,
 stop at the first confident answer:
 
   1. exact phrases + recipe aliases                     (~0 ms)   "where's the green one" -> lime

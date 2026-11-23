@@ -1,4 +1,4 @@
-"""Watcher (B3, loop 3): looks at the camera on its own, so the coach notices things without being asked.
+"""Watcher: looks at the camera on its own, so the coach notices things without being asked.
 
 Two jobs
   1. Event log:   a cheap vision model (Haiku) reads 3-4 recent frames and reports what changed
@@ -6,7 +6,7 @@ Two jobs
   2. Step done?:  the same call judges the current step's `done_when`.
                     - a confident "done" -> steps.propose_done("vision") -> "ask", and `on_ask` makes the agent
                       ask the user ("looks mashed, ready for the lime?"); the watcher never advances anything.
-                    - the latest verdict is cached for B2: `latest_verdict(step)` is Steps' verdict_provider,
+                    - the latest verdict is cached for Steps: `latest_verdict(step)` is Steps' verdict_provider,
                       so a premature "I'm done" can be pushed back (it must not block, hence cached).
 
 (The local knife-near-hand warning was cut: it would fire constantly while cutting. See docs/design-notes.md.

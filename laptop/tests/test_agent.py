@@ -431,7 +431,7 @@ def test_pushback_reason_reaches_the_model_via_the_tool_result():
     assert result["content"] == "push_back: still big chunks of avocado" and st.step == 2
 
 
-# ───────────── B5: fallbacks ─────────────
+# ───────────── fallbacks ─────────────
 
 from coach.agent import REPEAT_FALLBACK  # noqa: E402
 
