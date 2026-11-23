@@ -2329,7 +2329,7 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "camera: Wi-Fi only, no signal wires"
+	(text "camera (Wi-Fi only)"
 		(exclude_from_sim no)
 		(at 106.68 76.2 0)
 		(effects
@@ -2339,17 +2339,6 @@
 			(justify left top)
 		)
 		(uuid "3bd36a27-e82e-5c6b-b35d-0555e49a4b65")
-	)
-	(text "C1 and C3 sit physically at the servo plugs,\nnot back at the battery. Striped leg of C1 = GND."
-		(exclude_from_sim no)
-		(at 167.64 48.26 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left top)
-		)
-		(uuid "508a07fe-1663-5bb8-8fed-a248ec3152d2")
 	)
 	(text "ratatouille: cooking-coach wearable, power-bank build"
 		(exclude_from_sim no)
@@ -2361,28 +2350,6 @@
 			(justify left top)
 		)
 		(uuid "574b7a19-71e2-507b-9244-d750f19cc682")
-	)
-	(text "J1 CC1/CC2: 5.1k to GND on the board\n(add 2 if missing). D+/D-: unused."
-		(exclude_from_sim no)
-		(at 27.94 78.74 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left top)
-		)
-		(uuid "6d9ab139-b64f-59e0-8b69-cef79496f707")
-	)
-	(text "Do not use GPIO 35-37 (octal PSRAM)."
-		(exclude_from_sim no)
-		(at 106.68 134.62 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left top)
-		)
-		(uuid "c280420d-f624-5fe7-bf71-952cebe4caf5")
 	)
 	(junction
 		(at 182.88 64.77)
