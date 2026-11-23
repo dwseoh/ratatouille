@@ -7,22 +7,27 @@ A hands-free cooking coach you wear on your chest
 
 </div>
 
+   
+   
 **Mitigate the new recipe learning experience!**
    
 Remy hears you, sees your counter, walks you through a recipe one step at a time, and points a laser at the thing you need ("the lime, on your left") by turning its tilt module. 
 
 [Watch the Skit Demo](https://www.youtube.com/watch?v=ML1AmkTEyEA)   
+   
 [View the Devpost](https://devpost.com/software/ratatouille-u86zig)
 
 ## Hardware Assembly
 The schematic was designed on KiCad:    
+   
 ![Schematic](docs/img/kicad_schematic.png)
 
 This is what the inside looks like:     
+   
 ![Inside of Enclosure](docs/img/inside_enclosure.JPG)   
 
-After desiging the enclosure, everything was assembled into the enclosure:     
-<video src="docs/img/assembled_design.mp4" controls width="600"></video>
+After desiging the enclosure, everything was assembled into the enclosure:   
+     
      
 ## Key Features
 
