@@ -27,8 +27,10 @@ This is what the inside looks like:
 ![Inside of Enclosure](docs/img/inside_enclosure.JPG)   
 
 After desiging the enclosure, everything was assembled into the enclosure:   
-     
-     
+   
+https://github.com/user-attachments/assets/3f5f54ca-b406-4cfb-8a41-bab281400b93
+
+        
 ## Key Features
 
 - **Talks like a person.** Say "hey Remy, let's make guacamole". It answers in one or two short sentences, looks at
